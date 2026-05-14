@@ -110,7 +110,7 @@ namespace KoenZomers.Ring.Api
         }
 
         /// <summary>
-        /// Sends a POST request using the url encoded form method
+        /// Sends a POST request using a JSON body.
         /// </summary>
         /// <param name="url">Url to POST to</param>
         /// <param name="formFields">Dictonary with key/value pairs containing the forms data to POST to the webserver</param>
@@ -119,7 +119,7 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<string> FormPost(Uri url, Dictionary<string, string> formFields, NameValueCollection headerFields)
+        public async Task<string> PostJson(Uri url, Dictionary<string, string> formFields, NameValueCollection headerFields)
         {
             // Construct the POST request which performs the login
             var request = new HttpRequestMessage
@@ -140,7 +140,7 @@ namespace KoenZomers.Ring.Api
             request.Headers.UserAgent.TryParseAdd(RingUserAgent);
 
             // Set the content for the HTTP request
-            request.Content = new FormUrlEncodedContent(formFields);
+            request.Content = new StringContent(JsonSerializer.Serialize(formFields), Encoding.UTF8, "application/json");
 
             // Receive the response from the webserver
             var response = await _httpClient.SendAsync(request);

@@ -175,7 +175,7 @@ namespace KoenZomers.Ring.Api
             };
 
             // Make the Form POST request to request an OAuth Token
-            var oAuthResponse = await _httpUtility.FormPost(RingApiOAuthUrl,
+            var oAuthResponse = await _httpUtility.PostJson(RingApiOAuthUrl,
                                                             oAuthformFields,
                                                             headerFields);
 
@@ -237,7 +237,7 @@ namespace KoenZomers.Ring.Api
             // Make the Form POST request to request an OAuth Token
             try
             {
-                var oAuthResponse = await _httpUtility.FormPost(RingApiOAuthUrl,
+                var oAuthResponse = await _httpUtility.PostJson(RingApiOAuthUrl,
                                                                 oAuthformFields,
                                                                 headerFields);
 

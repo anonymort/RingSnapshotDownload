@@ -77,7 +77,17 @@ namespace KoenZomers.Ring.SnapshotDownload
                 // Use refresh token from previous session
                 Console.WriteLine("Authenticating using refresh token from previous session");
 
-                session = await Session.GetSessionByRefreshToken(Configuration.RefreshToken, GetHardwareIdOrDefault());
+                try
+                {
+                    session = await Session.GetSessionByRefreshToken(Configuration.RefreshToken, GetHardwareIdOrDefault());
+                }
+                catch (Api.Exceptions.AuthenticationFailedException)
+                {
+                    Console.WriteLine("Authentication failed: the saved Ring refresh token is no longer valid.");
+                    Console.WriteLine($"Delete {SettingsFilePath} or run again with fresh credentials.");
+                    Environment.Exit(1);
+                    return;
+                }
             }
             else
             {
@@ -102,6 +112,11 @@ namespace KoenZomers.Ring.SnapshotDownload
                 catch(Api.Exceptions.ThrottledException)
                 {
                     Console.WriteLine("Two factor authentication is required, but too many tokens have been requested recently. Wait for a few minutes and try connecting again.");
+                    Environment.Exit(1);
+                }
+                catch (Api.Exceptions.AuthenticationFailedException)
+                {
+                    Console.WriteLine("Authentication failed. Check your Ring email and password, then try again.");
                     Environment.Exit(1);
                 }
                 catch (WebException)

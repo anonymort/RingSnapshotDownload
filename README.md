@@ -35,6 +35,35 @@ dotnet restore
 dotnet build KoenZomers.Ring.SnapshotDownload.sln --configuration Release
 ```
 
+## Easiest Way: Guided Terminal Wizard
+
+On macOS or Linux, run:
+
+```bash
+./rsw.sh
+```
+
+The wizard will:
+
+1. Show an Anonymort ASCII logo.
+2. Build the project if you want.
+3. Ask for your Ring email.
+4. Ask for your Ring password with hidden input.
+5. List your Ring devices.
+6. Ask which device ID to use.
+7. Ask where to save snapshots.
+8. Download and optionally validate the image.
+
+If Ring asks for a two-factor code, type it directly into the terminal.
+
+The script does not save your password. The app may still save a Ring refresh token in `Settings.json`, which you should keep private.
+
+Windows PowerShell users can try the untested helper:
+
+```powershell
+.\rsw.ps1
+```
+
 ## Test
 
 There are no automated unit tests in this repository yet. Use these checks before publishing or using a build:
@@ -43,6 +72,7 @@ There are no automated unit tests in this repository yet. Use these checks befor
 dotnet build KoenZomers.Ring.SnapshotDownload.sln --configuration Release
 dotnet list KoenZomers.Ring.SnapshotDownload.sln package --vulnerable --include-transitive
 dotnet run --project ConsoleAppCore/ConsoleAppCore.csproj --configuration Release --
+./test-scripts.sh
 ```
 
 The last command should print the help text and exit because no username or device ID was provided.
