@@ -380,6 +380,8 @@ namespace KoenZomers.Ring.SnapshotDownload
 
             var manifest = new List<object>();
             var totalDownloaded = 0;
+            var forbiddenDays = 0;
+            var failedDays = 0;
             var now = DateTime.Now;
             var start = now.Date.AddDays(-Configuration.DownloadAllDays + 1);
 
@@ -399,8 +401,15 @@ namespace KoenZomers.Ring.SnapshotDownload
                 {
                     response = await session.GetPeriodicalFootage(Configuration.DeviceId.Value, dayStart, dayEnd);
                 }
+                catch (HttpRequestException e) when (e.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    forbiddenDays++;
+                    Console.WriteLine("Forbidden: Ring did not allow access to historical periodic footage for this day.");
+                    continue;
+                }
                 catch (Exception e)
                 {
+                    failedDays++;
                     Console.WriteLine($"Failed: {e.Message}");
                     continue;
                 }
@@ -445,6 +454,14 @@ namespace KoenZomers.Ring.SnapshotDownload
 
             Console.WriteLine();
             Console.WriteLine($"Downloaded {totalDownloaded} historical snapshot footage clip(s).");
+            if (forbiddenDays > 0)
+            {
+                Console.WriteLine($"Ring returned Forbidden for {forbiddenDays} day(s). Historical periodic footage may not be available for this account, device, region, subscription, or endpoint.");
+            }
+            if (failedDays > 0)
+            {
+                Console.WriteLine($"Other errors occurred for {failedDays} day(s).");
+            }
             Console.WriteLine($"Manifest saved to {manifestPath}");
         }
 
