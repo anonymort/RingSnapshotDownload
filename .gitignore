@@ -334,3 +334,6 @@ ASALocalRun/
 
 # Ring Snapshot Download local output
 snapshots/
+
+# macOS metadata
+.DS_Store
