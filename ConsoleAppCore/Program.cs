@@ -45,254 +45,224 @@ namespace KoenZomers.Ring.SnapshotDownload
             };
             var cancellationToken = cancellationSource.Token;
 
-            Console.WriteLine();
-
-            var appVersion = Assembly.GetExecutingAssembly().GetName().Version;
-
-            Console.WriteLine($"Ring Snapshot Download Tool v{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}.{appVersion.Revision} by Koen Zomers");
-            Console.WriteLine();
-
-            if (args.Contains("-help") || args.Contains("--help") || args.Contains("-h"))
-            {
-                DisplayHelp();
-                Environment.Exit(0);
-            }
-
-            // Load the configuration
-            Configuration = await Configuration.Load(SettingsFilePath);
-
-            // Parse the provided arguments
             try
             {
-                ParseArguments(args);
-            }
-            catch (FormatException ex)
-            {
-                Console.WriteLine($"Error: {ex.Message}");
-                DisplayHelp();
-                Environment.Exit(1);
-            }
-
-            // Ensure we have the required configuration
-            if (string.IsNullOrWhiteSpace(Configuration.Username) && string.IsNullOrWhiteSpace(Configuration.RefreshToken))
-            {
-                Console.WriteLine("Error: -username is required");
-                DisplayHelp();
-                Environment.Exit(1);
-            }
-
-            if (string.IsNullOrWhiteSpace(Configuration.Password) && string.IsNullOrWhiteSpace(Configuration.RefreshToken))
-            {
-                Console.WriteLine("Error: -password is required");
-                DisplayHelp();
-                Environment.Exit(1);
-            }
-
-            if (!Configuration.DeviceId.HasValue && !Configuration.ListBots)
-            {
-                Console.WriteLine("Error: -deviceid or -list is required");
-                DisplayHelp();
-                Environment.Exit(1);
-            }
-
-            // Connect to Ring
-            Console.WriteLine("Connecting to Ring services");
-            Session session;
-            if (!string.IsNullOrWhiteSpace(Configuration.RefreshToken))
-            {
-                // Use refresh token from previous session
-                Console.WriteLine("Authenticating using refresh token from previous session");
-
-                try
-                {
-                session = await Session.GetSessionByRefreshToken(Configuration.RefreshToken, GetHardwareIdOrDefault(), cancellationToken: cancellationToken);
-                }
-                catch (Api.Exceptions.AuthenticationFailedException)
-                {
-                    Console.WriteLine("Authentication failed: the saved Ring refresh token is no longer valid.");
-                    Console.WriteLine($"Delete {SettingsFilePath} or run again with fresh credentials.");
-                    Environment.Exit(1);
-                    return;
-                }
-            }
-            else
-            {
-                // Use the username and password provided
-                Console.WriteLine("Authenticating using provided username and password");
-
-                session = new Session(Configuration.Username, Configuration.Password, GetHardwareIdOrDefault());
-
-                try
-                {
-                    await session.Authenticate(cancellationToken: cancellationToken);
-                }
-                catch (Api.Exceptions.TwoFactorAuthenticationRequiredException)
-                {
-                    // Two factor authentication is enabled on the account. The above Authenticate() will trigger a text or e-mail message to be sent. Ask for the token sent in that message here.
-                    Console.WriteLine($"Two factor authentication enabled on this account, please enter the Ring token from the e-mail, text message or authenticator app:");
-                    var token = Console.ReadLine();
-
-                    // Authenticate again using the two factor token
-                    await session.Authenticate(twoFactorAuthCode: token, cancellationToken: cancellationToken);
-                }
-                catch(Api.Exceptions.ThrottledException)
-                {
-                    Console.WriteLine("Two factor authentication is required, but too many tokens have been requested recently. Wait for a few minutes and try connecting again.");
-                    Environment.Exit(1);
-                }
-                catch (Api.Exceptions.AuthenticationFailedException e)
-                {
-                    Console.WriteLine(e.Message);
-                    Console.WriteLine("Check your Ring email and password, then try again.");
-                    Environment.Exit(1);
-                }
-                catch (WebException)
-                {
-                    Console.WriteLine("Connection failed. Validate your credentials.");
-                    Environment.Exit(1);
-                }
-            }
-
-            // If we have a refresh token, update the config file with it so we don't need to authenticate again next time
-            if (session.OAuthToken != null)
-            {
-                Configuration.RefreshToken = session.OAuthToken.RefreshToken;
-                await Configuration.Save();
-            }
-
-            if (Configuration.ListBots)
-            {
-                // Retrieve all available Ring devices and list them
-                Console.Write("Retrieving all devices... ");
-                
-                var devices = await session.GetRingDevices(cancellationToken);
-
-                Console.WriteLine($"{devices.Doorbots.Count + devices.AuthorizedDoorbots.Count + devices.StickupCams.Count} found");
                 Console.WriteLine();
 
-                if (devices.AuthorizedDoorbots.Count > 0)
+                var appVersion = Assembly.GetExecutingAssembly().GetName().Version;
+
+                Console.WriteLine($"Ring Snapshot Download Tool v{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}.{appVersion.Revision} by Koen Zomers");
+                Console.WriteLine();
+
+                if (args.Contains("-help") || args.Contains("--help") || args.Contains("-h"))
                 {
-                    Console.WriteLine("Authorized Doorbells");
-                    foreach (var device in devices.AuthorizedDoorbots)
-                    {
-                        Console.WriteLine($"{device.Id} - {device.Description}");
-                    }
-                    Console.WriteLine();
-                }
-                if (devices.Doorbots.Count > 0)
-                {
-                    Console.WriteLine("Doorbells");
-                    foreach (var device in devices.Doorbots)
-                    {
-                        Console.WriteLine($"{device.Id} - {device.Description}");
-                    }
-                    Console.WriteLine();
-                }
-                if (devices.StickupCams.Count > 0)
-                {
-                    Console.WriteLine("Stickup cams");
-                    foreach (var device in devices.StickupCams)
-                    {
-                        Console.WriteLine($"{device.Id} - {device.Description}");
-                    }
-                    Console.WriteLine();
-                }
-            }
-            else
-            {
-                if (Configuration.DownloadAllHistoricalSnapshots)
-                {
-                    await DownloadAllHistoricalRecordings(session, cancellationToken);
-                    Console.WriteLine("Done");
+                    DisplayHelp();
                     Environment.Exit(0);
                 }
 
-                Directory.CreateDirectory(Configuration.OutputPath);
+                // Load the configuration
+                Configuration = await Configuration.Load(SettingsFilePath);
 
-                // By default the screenshot will be tagged with the current date/time unless we can retrieve information from Ring when the latest snapshot was really taken
-                var timeStamp = DateTime.Now;
-
-                // Retrieve when the latest available snapshot was taken
+                // Parse the provided arguments
                 try
                 {
-                    var doorbotTimeStamps = await session.GetDoorbotSnapshotTimestamp(Configuration.DeviceId.Value, cancellationToken);
-
-                    // Validate if we received timestamps
-                    if(doorbotTimeStamps.Timestamp.Count > 0)
-                    {
-                        // Filter out timestamps which are not for the doorbot we are requesting and take the most recent snapshot only
-                        var latestDoorbotTimeStamp = doorbotTimeStamps.Timestamp.Where(t => t.DoorbotId.HasValue && t.DoorbotId.Value == Configuration.DeviceId.Value).OrderByDescending(t => t.TimestampEpoch).FirstOrDefault();
-
-                        // If we have a result and the result has an Epoch timestamp on it, use that as the marker for when the screenshot has been taken
-                        if (latestDoorbotTimeStamp != null && latestDoorbotTimeStamp.TimestampEpoch.HasValue)
-                        {
-                            // Convert from the Epoch time to a DateTime we can use
-                            timeStamp = latestDoorbotTimeStamp.Timestamp.Value;
-                        }
-                    }
+                    ParseArguments(args);
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                catch (FormatException ex)
                 {
-                    throw;
-                }
-                catch (Exception e) when (e is DeviceUnknownException || e is HttpRequestException)
-                {
-                    Console.WriteLine($"Unable to retrieve snapshot timestamp, using the current time instead: {e.Message}");
+                    Console.WriteLine($"Error: {ex.Message}");
+                    DisplayHelp();
+                    Environment.Exit(1);
                 }
 
-                // Construct the filename and path where to save the file
-                var downloadFileName = $"{Configuration.DeviceId} - {timeStamp:yyyy-MM-dd HH-mm-ss}.jpg";
-                var downloadFullPath = Path.Combine(Configuration.OutputPath, downloadFileName);
-
-                // Retrieve the snapshot                
-                short attempt = 0;
-                var downloadSucceeded = false;
-                var imageValidationSucceeded = true;
-                var savingSucceeded = false;
-                do
+                // Ensure we have the required configuration
+                if (string.IsNullOrWhiteSpace(Configuration.Username) && string.IsNullOrWhiteSpace(Configuration.RefreshToken))
                 {
-                    attempt++;
-                    downloadSucceeded = false;
-                    imageValidationSucceeded = true;
-                    savingSucceeded = false;
+                    Console.WriteLine("Error: -username is required");
+                    DisplayHelp();
+                    Environment.Exit(1);
+                }
+
+                if (string.IsNullOrWhiteSpace(Configuration.Password) && string.IsNullOrWhiteSpace(Configuration.RefreshToken))
+                {
+                    Console.WriteLine("Error: -password is required");
+                    DisplayHelp();
+                    Environment.Exit(1);
+                }
+
+                if (!Configuration.DeviceId.HasValue && !Configuration.ListBots)
+                {
+                    Console.WriteLine("Error: -deviceid or -list is required");
+                    DisplayHelp();
+                    Environment.Exit(1);
+                }
+
+                // Connect to Ring
+                Console.WriteLine("Connecting to Ring services");
+                Session session;
+                if (!string.IsNullOrWhiteSpace(Configuration.RefreshToken))
+                {
+                    // Use refresh token from previous session
+                    Console.WriteLine("Authenticating using refresh token from previous session");
+
                     try
                     {
-                        Console.Write($"Downloading snapshot from Ring device with ID {Configuration.DeviceId}... ");
+                        session = await Session.GetSessionByRefreshToken(Configuration.RefreshToken, GetHardwareIdOrDefault(), cancellationToken: cancellationToken);
+                    }
+                    catch (Api.Exceptions.AuthenticationFailedException)
+                    {
+                        Console.WriteLine("Authentication failed: the saved Ring refresh token is no longer valid.");
+                        Console.WriteLine($"Delete {SettingsFilePath} or run again with fresh credentials.");
+                        Environment.Exit(1);
+                        return;
+                    }
+                }
+                else
+                {
+                    // Use the username and password provided
+                    Console.WriteLine("Authenticating using provided username and password");
 
-                        await session.DownloadLatestSnapshot(Configuration.DeviceId.Value, downloadFullPath, Configuration.ForceUpdateSnapshot, cancellationToken: cancellationToken);
-                        downloadSucceeded = true;
-                        
-                        Console.WriteLine("OK");
+                    session = new Session(Configuration.Username, Configuration.Password, GetHardwareIdOrDefault());
+
+                    try
+                    {
+                        await session.Authenticate(cancellationToken: cancellationToken);
+                    }
+                    catch (Api.Exceptions.TwoFactorAuthenticationRequiredException)
+                    {
+                        // Two factor authentication is enabled on the account. The above Authenticate() will trigger a text or e-mail message to be sent. Ask for the token sent in that message here.
+                        Console.WriteLine($"Two factor authentication enabled on this account, please enter the Ring token from the e-mail, text message or authenticator app:");
+                        var token = Console.ReadLine();
+
+                        // Authenticate again using the two factor token
+                        await session.Authenticate(twoFactorAuthCode: token, cancellationToken: cancellationToken);
+                    }
+                    catch (Api.Exceptions.ThrottledException)
+                    {
+                        Console.WriteLine("Two factor authentication is required, but too many tokens have been requested recently. Wait for a few minutes and try connecting again.");
+                        Environment.Exit(1);
+                    }
+                    catch (Api.Exceptions.AuthenticationFailedException e)
+                    {
+                        Console.WriteLine(e.Message);
+                        Console.WriteLine("Check your Ring email and password, then try again.");
+                        Environment.Exit(1);
+                    }
+                    catch (WebException)
+                    {
+                        Console.WriteLine("Connection failed. Validate your credentials.");
+                        Environment.Exit(1);
+                    }
+                }
+
+                // If we have a refresh token, update the config file with it so we don't need to authenticate again next time
+                if (session.OAuthToken != null)
+                {
+                    Configuration.RefreshToken = session.OAuthToken.RefreshToken;
+                    await Configuration.Save();
+                }
+
+                if (Configuration.ListBots)
+                {
+                    // Retrieve all available Ring devices and list them
+                    Console.Write("Retrieving all devices... ");
+
+                    var devices = await session.GetRingDevices(cancellationToken);
+
+                    Console.WriteLine($"{devices.Doorbots.Count + devices.AuthorizedDoorbots.Count + devices.StickupCams.Count} found");
+                    Console.WriteLine();
+
+                    if (devices.AuthorizedDoorbots.Count > 0)
+                    {
+                        Console.WriteLine("Authorized Doorbells");
+                        foreach (var device in devices.AuthorizedDoorbots)
+                        {
+                            Console.WriteLine($"{device.Id} - {device.Description}");
+                        }
+                        Console.WriteLine();
+                    }
+                    if (devices.Doorbots.Count > 0)
+                    {
+                        Console.WriteLine("Doorbells");
+                        foreach (var device in devices.Doorbots)
+                        {
+                            Console.WriteLine($"{device.Id} - {device.Description}");
+                        }
+                        Console.WriteLine();
+                    }
+                    if (devices.StickupCams.Count > 0)
+                    {
+                        Console.WriteLine("Stickup cams");
+                        foreach (var device in devices.StickupCams)
+                        {
+                            Console.WriteLine($"{device.Id} - {device.Description}");
+                        }
+                        Console.WriteLine();
+                    }
+                }
+                else
+                {
+                    if (Configuration.DownloadAllHistoricalSnapshots)
+                    {
+                        await DownloadAllHistoricalRecordings(session, cancellationToken);
+                        Console.WriteLine("Done");
+                        Environment.Exit(0);
+                    }
+
+                    Directory.CreateDirectory(Configuration.OutputPath);
+
+                    // By default the screenshot will be tagged with the current date/time unless we can retrieve information from Ring when the latest snapshot was really taken
+                    var timeStamp = DateTime.Now;
+
+                    // Retrieve when the latest available snapshot was taken
+                    try
+                    {
+                        var doorbotTimeStamps = await session.GetDoorbotSnapshotTimestamp(Configuration.DeviceId.Value, cancellationToken);
+
+                        // Validate if we received timestamps
+                        if (doorbotTimeStamps.Timestamp.Count > 0)
+                        {
+                            // Filter out timestamps which are not for the doorbot we are requesting and take the most recent snapshot only
+                            var latestDoorbotTimeStamp = doorbotTimeStamps.Timestamp.Where(t => t.DoorbotId.HasValue && t.DoorbotId.Value == Configuration.DeviceId.Value).OrderByDescending(t => t.TimestampEpoch).FirstOrDefault();
+
+                            // If we have a result and the result has an Epoch timestamp on it, use that as the marker for when the screenshot has been taken
+                            if (latestDoorbotTimeStamp != null && latestDoorbotTimeStamp.TimestampEpoch.HasValue)
+                            {
+                                // Convert from the Epoch time to a DateTime we can use
+                                timeStamp = latestDoorbotTimeStamp.Timestamp.Value;
+                            }
+                        }
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
                         throw;
                     }
-                    catch (Exception e) when (IsRetryableSnapshotError(e))
+                    catch (Exception e) when (e is DeviceUnknownException || e is HttpRequestException)
                     {
-                        if (attempt < Configuration.MaximumRetries)
-                        {
-                            Console.WriteLine($"Failed: {e.Message}, retrying ({attempt}/{Configuration.MaximumRetries})");
-                            await Task.Delay(GetSnapshotRetryDelay(attempt), cancellationToken);
-                            continue;
-                        }
-
-                        Console.WriteLine($"Failed: {e.Message}, reached retry limit ({attempt}/{Configuration.MaximumRetries})");
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine($"Failed: {e.Message}, no retry configured.");
-                        break;
+                        Console.WriteLine($"Unable to retrieve snapshot timestamp, using the current time instead: {e.Message}");
                     }
 
-                    // Check if the image should be validated to not be corrupt
-                    if(downloadSucceeded && Configuration.ValidateImage)
+                    // Construct the filename and path where to save the file
+                    var downloadFileName = $"{Configuration.DeviceId} - {timeStamp:yyyy-MM-dd HH-mm-ss}.jpg";
+                    var downloadFullPath = Path.Combine(Configuration.OutputPath, downloadFileName);
+
+                    // Retrieve the snapshot
+                    short attempt = 0;
+                    var downloadSucceeded = false;
+                    var imageValidationSucceeded = true;
+                    var savingSucceeded = false;
+                    do
                     {
-                        Console.Write("Validating image... ");
+                        attempt++;
+                        downloadSucceeded = false;
+                        imageValidationSucceeded = true;
+                        savingSucceeded = false;
                         try
                         {
-                            await using var downloadedImage = File.OpenRead(downloadFullPath);
-                            await Image.DetectFormatAsync(downloadedImage);
+                            Console.Write($"Downloading snapshot from Ring device with ID {Configuration.DeviceId}... ");
+
+                            await session.DownloadLatestSnapshot(Configuration.DeviceId.Value, downloadFullPath, Configuration.ForceUpdateSnapshot, cancellationToken: cancellationToken);
+                            downloadSucceeded = true;
 
                             Console.WriteLine("OK");
                         }
@@ -300,47 +270,89 @@ namespace KoenZomers.Ring.SnapshotDownload
                         {
                             throw;
                         }
-                        catch(InvalidImageContentException)
+                        catch (Exception e) when (IsRetryableSnapshotError(e))
                         {
-                            Console.WriteLine($"Failed: image content corrupt, retrying ({attempt}/{Configuration.MaximumRetries})");
-                            imageValidationSucceeded = false;
                             TryDeletePartialFile(downloadFullPath);
-                        }
-                        catch(UnknownImageFormatException)
-                        {
-                            Console.WriteLine($"Failed: image content not recognized, retrying ({attempt}/{Configuration.MaximumRetries})");
-                            imageValidationSucceeded = false;
-                            TryDeletePartialFile(downloadFullPath);
-                        }
-                    }
 
-                    if(downloadSucceeded && imageValidationSucceeded)
+                            if (attempt < Configuration.MaximumRetries)
+                            {
+                                Console.WriteLine($"Failed: {e.Message}, retrying ({attempt}/{Configuration.MaximumRetries})");
+                                await Task.Delay(GetSnapshotRetryDelay(attempt), cancellationToken);
+                                continue;
+                            }
+
+                            Console.WriteLine($"Failed: {e.Message}, reached retry limit ({attempt}/{Configuration.MaximumRetries})");
+                        }
+                        catch (Exception e)
+                        {
+                            TryDeletePartialFile(downloadFullPath);
+                            Console.WriteLine($"Failed: {e.Message}, no retry configured.");
+                            break;
+                        }
+
+                        // Check if the image should be validated to not be corrupt
+                        if (downloadSucceeded && Configuration.ValidateImage)
+                        {
+                            Console.Write("Validating image... ");
+                            try
+                            {
+                                await using var downloadedImage = File.OpenRead(downloadFullPath);
+                                await Image.DetectFormatAsync(downloadedImage);
+
+                                Console.WriteLine("OK");
+                            }
+                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                            {
+                                throw;
+                            }
+                            catch (InvalidImageContentException)
+                            {
+                                Console.WriteLine($"Failed: image content corrupt, retrying ({attempt}/{Configuration.MaximumRetries})");
+                                imageValidationSucceeded = false;
+                                TryDeletePartialFile(downloadFullPath);
+                            }
+                            catch (UnknownImageFormatException)
+                            {
+                                Console.WriteLine($"Failed: image content not recognized, retrying ({attempt}/{Configuration.MaximumRetries})");
+                                imageValidationSucceeded = false;
+                                TryDeletePartialFile(downloadFullPath);
+                            }
+                        }
+
+                        if (downloadSucceeded && imageValidationSucceeded)
+                        {
+                            Console.Write($"Saving image to {downloadFullPath}... ");
+                            try
+                            {
+                                savingSucceeded = true;
+                                Console.WriteLine("OK");
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine($"Failed: {e.Message}, retrying ({attempt}/{Configuration.MaximumRetries})");
+                                savingSucceeded = false;
+                                TryDeletePartialFile(downloadFullPath);
+                            }
+                        }
+
+                    } while ((!downloadSucceeded || !imageValidationSucceeded || !savingSucceeded) && attempt < Configuration.MaximumRetries);
+
+                    if (!savingSucceeded)
                     {
-                        Console.Write($"Saving image to {downloadFullPath}... ");
-                        try
-                        {
-                            savingSucceeded = true;
-                            Console.WriteLine("OK");
-                        }
-                        catch(Exception e)
-                        {
-                            Console.WriteLine($"Failed: {e.Message}, retrying ({attempt}/{Configuration.MaximumRetries})");
-                            savingSucceeded = false;
-                            TryDeletePartialFile(downloadFullPath);
-                        }
+                        Environment.Exit(1);
                     }
-
-                } while ((!downloadSucceeded || !imageValidationSucceeded || !savingSucceeded) && attempt < Configuration.MaximumRetries);
-
-                if (!savingSucceeded)
-                {
-                    Environment.Exit(1);
                 }
-            }
-            
-            Console.WriteLine("Done");
 
-            Environment.Exit(0);
+                Console.WriteLine("Done");
+
+                Environment.Exit(0);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Cancelled.");
+                Environment.Exit(1);
+            }
         }
 
         /// <summary>

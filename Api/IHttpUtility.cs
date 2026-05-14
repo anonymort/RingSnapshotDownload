@@ -12,7 +12,7 @@ namespace KoenZomers.Ring.Api
     /// <summary>
     /// Abstraction for HTTP utility calls to enable cancellation and testability.
     /// </summary>
-public interface IHttpUtility
+    public interface IHttpUtility
     {
         Task<string> GetContents(Uri url, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default);
 

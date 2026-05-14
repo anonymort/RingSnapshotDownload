@@ -1,11 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-    using System.Collections.Specialized;
-    using System.IO;
-    using System.Net;
-    using System.Text.Json;
-    using System.Threading;
-    using System.Threading.Tasks;
+using System.Collections.Specialized;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using KoenZomers.Ring.Api.Entities;
 
 namespace KoenZomers.Ring.Api
@@ -78,7 +77,14 @@ namespace KoenZomers.Ring.Api
         /// <summary>
         /// Initiates a new session to the Ring API
         /// </summary>
-        public Session(string username, string password, string hardwareId, IHttpUtility httpUtility = null)
+        public Session(string username, string password, string hardwareId) : this(username, password, hardwareId, null)
+        {
+        }
+
+        /// <summary>
+        /// Initiates a new session to the Ring API with a custom HTTP utility.
+        /// </summary>
+        public Session(string username, string password, string hardwareId, IHttpUtility httpUtility)
         {
             Username = username;
             Password = password;
@@ -116,6 +122,21 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
+        public static Task<Session> GetSessionByRefreshToken(string refreshToken, string hardwareId) =>
+            GetSessionByRefreshToken(refreshToken, hardwareId, null, default);
+
+        /// <summary>
+        /// Creates a new session to the Ring API using a RefreshToken received from a previous session
+        /// </summary>
+        /// <param name="refreshToken">RefreshToken received from the prior authentication</param>
+        /// <param name="hardwareId">This device's hardware id.</param>
+        /// <param name="httpUtility">HTTP utility implementation to use for requests.</param>
+        /// <param name="cancellationToken">Cancellation token to stop the operation.</param>
+        /// <returns>Authenticated session based on the RefreshToken or NULL if the session could not be authenticated</returns>
+        /// <exception cref="Exceptions.AuthenticationFailedException">Thrown when the refresh token is invalid.</exception>
+        /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
+        /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
+        /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
         public static async Task<Session> GetSessionByRefreshToken(string refreshToken, string hardwareId, IHttpUtility httpUtility = null, CancellationToken cancellationToken = default)
         {
             var session = new Session(httpUtility);
@@ -148,7 +169,27 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task Authenticate(string operatingSystem = "windows",
+        public Task Authenticate(string operatingSystem = "windows",
+                                                            string appBrand = "ring",
+                                                            string deviceModel = "unspecified",
+                                                            string deviceName = "unspecified",
+                                                            string resolution = "800x600",
+                                                            string appVersion = "2.1.8",
+                                                            DateTime? appInstallationDate = null,
+                                                            string manufacturer = "unspecified",
+                                                            string deviceType = "tablet",
+                                                            string architecture = "x64",
+                                                            string language = "en",
+                                                            string twoFactorAuthCode = null) =>
+            AuthenticateInternal(operatingSystem, appBrand, deviceModel, deviceName, resolution, appVersion, appInstallationDate, manufacturer, deviceType, architecture, language, twoFactorAuthCode, default);
+
+        public Task Authenticate(CancellationToken cancellationToken) =>
+            AuthenticateInternal(cancellationToken: cancellationToken);
+
+        public Task Authenticate(string twoFactorAuthCode, CancellationToken cancellationToken) =>
+            AuthenticateInternal(twoFactorAuthCode: twoFactorAuthCode, cancellationToken: cancellationToken);
+
+        private async Task AuthenticateInternal(string operatingSystem = "windows",
                                                             string appBrand = "ring",
                                                             string deviceModel = "unspecified",
                                                             string deviceName = "unspecified",
@@ -208,7 +249,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task RefreshSession(CancellationToken cancellationToken = default) => await RefreshSession(OAuthToken.RefreshToken, cancellationToken);
+        public Task RefreshSession() => RefreshSession(OAuthToken.RefreshToken, CancellationToken.None);
+
+        public Task RefreshSession(CancellationToken cancellationToken) => RefreshSession(OAuthToken.RefreshToken, cancellationToken);
 
         /// <summary>
         /// Authenticates to the Ring API using the provided refresh token
@@ -218,7 +261,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task RefreshSession(string refreshToken, CancellationToken cancellationToken = default)
+        public Task RefreshSession(string refreshToken) => RefreshSession(refreshToken, CancellationToken.None);
+
+        public async Task RefreshSession(string refreshToken, CancellationToken cancellationToken)
         {
             // Check for mandatory parameters
             if (string.IsNullOrEmpty(refreshToken))
@@ -263,7 +308,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
         /// 
-        public async Task EnsureSessionValid(CancellationToken cancellationToken = default)
+        public Task EnsureSessionValid() => EnsureSessionValid(CancellationToken.None);
+
+        public async Task EnsureSessionValid(CancellationToken cancellationToken)
         {
             // Ensure the session is authenticated
             if (!IsAuthenticated)
@@ -300,7 +347,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<Devices> GetRingDevices(CancellationToken cancellationToken = default)
+        public Task<Devices> GetRingDevices() => GetRingDevices(CancellationToken.None);
+
+        public async Task<Devices> GetRingDevices(CancellationToken cancellationToken)
         {
             await EnsureSessionValid(cancellationToken);
 
@@ -321,7 +370,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<Stream> GetDoorbotHistoryRecording(string dingId, CancellationToken cancellationToken = default)
+        public Task<Stream> GetDoorbotHistoryRecording(string dingId) => GetDoorbotHistoryRecording(dingId, CancellationToken.None);
+
+        public async Task<Stream> GetDoorbotHistoryRecording(string dingId, CancellationToken cancellationToken)
         {
             var downloadUri = await GetDoorbotHistoryRecordingUri(dingId, cancellationToken);
             return await _httpUtility.DownloadFile(downloadUri, hardwareId: HardwareId, cancellationToken: cancellationToken);
@@ -374,7 +425,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task GetDoorbotHistoryRecording(string dingId, string saveAs, CancellationToken cancellationToken = default)
+        public Task GetDoorbotHistoryRecording(string dingId, string saveAs) => GetDoorbotHistoryRecording(dingId, saveAs, CancellationToken.None);
+
+        public async Task GetDoorbotHistoryRecording(string dingId, string saveAs, CancellationToken cancellationToken)
         {
             var downloadUri = await GetDoorbotHistoryRecordingUri(dingId, cancellationToken);
             await _httpUtility.DownloadFileToPath(downloadUri, saveAs, AuthenticationToken, HardwareId, cancellationToken);
@@ -391,7 +444,10 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<Stream> GetLatestSnapshot(int doorbotId, bool forceRefresh = false, long? afterMilliseconds = null, CancellationToken cancellationToken = default)
+        public Task<Stream> GetLatestSnapshot(int doorbotId, bool forceRefresh = false, long? afterMilliseconds = null) =>
+            GetLatestSnapshot(doorbotId, forceRefresh, afterMilliseconds, default);
+
+        public async Task<Stream> GetLatestSnapshot(int doorbotId, bool forceRefresh, long? afterMilliseconds, CancellationToken cancellationToken)
         {
             await EnsureSessionValid(cancellationToken);
 
@@ -428,6 +484,8 @@ namespace KoenZomers.Ring.Api
         /// <param name="saveAs">Full path including the filename where to save the snapshot</param>
         public async Task DownloadLatestSnapshot(int doorbotId, string saveAs, bool forceRefresh = false, long? afterMilliseconds = null, CancellationToken cancellationToken = default)
         {
+            await EnsureSessionValid(cancellationToken);
+
             var downloadSnapshotUri = GetLatestSnapshotUri(doorbotId, forceRefresh, afterMilliseconds);
             await _httpUtility.DownloadFileToPath(downloadSnapshotUri, saveAs, AuthenticationToken, HardwareId, cancellationToken);
         }
@@ -443,7 +501,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
         /// <exception cref="Exceptions.UnexpectedOutcomeException">Thrown if the actual HTTP response is different from what was expected</exception>
-        public async Task UpdateSnapshot(int doorbotId, CancellationToken cancellationToken = default)
+        public Task UpdateSnapshot(int doorbotId) => UpdateSnapshot(doorbotId, CancellationToken.None);
+
+        public async Task UpdateSnapshot(int doorbotId, CancellationToken cancellationToken)
         {
             await EnsureSessionValid(cancellationToken);
 
@@ -467,7 +527,9 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<DoorbotTimestamps> GetDoorbotSnapshotTimestamp(int doorbotId, CancellationToken cancellationToken = default)
+        public Task<DoorbotTimestamps> GetDoorbotSnapshotTimestamp(int doorbotId) => GetDoorbotSnapshotTimestamp(doorbotId, CancellationToken.None);
+
+        public async Task<DoorbotTimestamps> GetDoorbotSnapshotTimestamp(int doorbotId, CancellationToken cancellationToken)
         {
             await EnsureSessionValid(cancellationToken);
 
@@ -485,7 +547,10 @@ namespace KoenZomers.Ring.Api
         /// <summary>
         /// Searches historical video events for a device.
         /// </summary>
-        public async Task<VideoSearchResponse> SearchVideoHistory(int doorbotId, DateTime start, DateTime end, CancellationToken cancellationToken = default)
+        public Task<VideoSearchResponse> SearchVideoHistory(int doorbotId, DateTime start, DateTime end) =>
+            SearchVideoHistory(doorbotId, start, end, default);
+
+        public async Task<VideoSearchResponse> SearchVideoHistory(int doorbotId, DateTime start, DateTime end, CancellationToken cancellationToken)
         {
             await EnsureSessionValid(cancellationToken);
 
