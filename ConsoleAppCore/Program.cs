@@ -380,6 +380,7 @@ namespace KoenZomers.Ring.SnapshotDownload
 
             var manifest = new List<object>();
             var totalDownloaded = 0;
+            var totalRecordingFallbackDownloaded = 0;
             var forbiddenDays = 0;
             var failedDays = 0;
             var now = DateTime.Now;
@@ -405,6 +406,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                 {
                     forbiddenDays++;
                     Console.WriteLine("Forbidden: Ring did not allow access to historical periodic footage for this day.");
+                    totalRecordingFallbackDownloaded += await DownloadVideoHistoryFallback(session, outputPath, manifest, dayStart, dayEnd);
                     continue;
                 }
                 catch (Exception e)
@@ -416,6 +418,11 @@ namespace KoenZomers.Ring.SnapshotDownload
 
                 var clips = response?.Data?.Where(c => !c.Deleted && !string.IsNullOrWhiteSpace(c.Url)).ToList() ?? new List<PeriodicFootage>();
                 Console.WriteLine($"{clips.Count} clip(s)");
+
+                if (clips.Count == 0)
+                {
+                    totalRecordingFallbackDownloaded += await DownloadVideoHistoryFallback(session, outputPath, manifest, dayStart, dayEnd);
+                }
 
                 foreach (var clip in clips)
                 {
@@ -434,6 +441,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                         manifest.Add(new
                         {
                             file = fileName,
+                            source = "periodic_footage",
                             clip.Kind,
                             start = clipStart,
                             end = clipEnd,
@@ -454,15 +462,75 @@ namespace KoenZomers.Ring.SnapshotDownload
 
             Console.WriteLine();
             Console.WriteLine($"Downloaded {totalDownloaded} historical snapshot footage clip(s).");
+            Console.WriteLine($"Downloaded {totalRecordingFallbackDownloaded} historical recording fallback clip(s).");
             if (forbiddenDays > 0)
             {
                 Console.WriteLine($"Ring returned Forbidden for {forbiddenDays} day(s). Historical periodic footage may not be available for this account, device, region, subscription, or endpoint.");
+                Console.WriteLine("For those days, this tool attempted the video-history fallback and saved any available event recordings.");
             }
             if (failedDays > 0)
             {
                 Console.WriteLine($"Other errors occurred for {failedDays} day(s).");
             }
             Console.WriteLine($"Manifest saved to {manifestPath}");
+        }
+
+        private static async Task<int> DownloadVideoHistoryFallback(Session session, string outputPath, List<object> manifest, DateTime dayStart, DateTime dayEnd)
+        {
+            Console.Write($"  Fallback video history {dayStart:yyyy-MM-dd}... ");
+            VideoSearchResponse response;
+            try
+            {
+                response = await session.SearchVideoHistory(Configuration.DeviceId.Value, dayStart, dayEnd);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Failed: {e.Message}");
+                return 0;
+            }
+
+            var events = response?.VideoSearch?.Where(e => !string.IsNullOrWhiteSpace(e.DingId)).ToList() ?? new List<VideoSearchResult>();
+            Console.WriteLine($"{events.Count} event(s)");
+
+            var downloaded = 0;
+            foreach (var historicalEvent in events)
+            {
+                var createdAt = DateTimeOffset.FromUnixTimeMilliseconds(historicalEvent.CreatedAt).LocalDateTime;
+                var fileName = $"{Configuration.DeviceId} - {createdAt:yyyy-MM-dd HH-mm-ss} - {SanitizeFileName(historicalEvent.Kind ?? "event")} - recording.mp4";
+                var filePath = Path.Combine(outputPath, fileName);
+
+                if (File.Exists(filePath))
+                {
+                    Console.WriteLine($"    Skipping existing {fileName}");
+                    continue;
+                }
+
+                Console.Write($"    Downloading {fileName}... ");
+                try
+                {
+                    using var stream = await session.GetDoorbotHistoryRecording(historicalEvent.DingId);
+                    using var file = File.Create(filePath);
+                    await stream.CopyToAsync(file);
+                    downloaded++;
+                    manifest.Add(new
+                    {
+                        file = fileName,
+                        source = "video_history_fallback",
+                        dingId = historicalEvent.DingId,
+                        historicalEvent.Kind,
+                        createdAt,
+                        duration = historicalEvent.Duration,
+                        historicalEvent.HadSubscription
+                    });
+                    Console.WriteLine("OK");
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Failed: {e.Message}");
+                }
+            }
+
+            return downloaded;
         }
 
         private static string SanitizeFileName(string value)

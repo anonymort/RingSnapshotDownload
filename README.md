@@ -89,6 +89,8 @@ Historical downloads are saved under:
 snapshots/<device-id> - historical snapshot footage/
 ```
 
+If Ring returns `403 Forbidden` or no periodic footage for a day, the tool falls back to Ring video history for that day and downloads available event recordings. Those fallback files are still useful for local frame extraction, but they are event recordings rather than pure periodic snapshot footage.
+
 Extracted JPG frames are saved under:
 
 ```text
@@ -252,6 +254,8 @@ https://api.ring.com/recordings/public/footages/{device-id}
 ```
 
 That endpoint can return MP4 clips built from periodic snapshot capture. The tool saves those clips and writes a `manifest.json` file with clip metadata.
+
+If the periodic footage endpoint is forbidden or empty, the tool then tries Ring's video-history endpoint for the same day and downloads available event recordings through Ring's recording-download flow. This does not force access to unavailable footage, but it gives the local extraction step the best available MP4 source that Ring returns for the account.
 
 If you pass `--dlall-extract`, the wrapper then uses local `ffmpeg` to extract JPG frames from those MP4 clips. This means the JPG files are generated locally from downloaded footage; they are not separate JPEG files returned directly by Ring.
 

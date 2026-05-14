@@ -491,6 +491,20 @@ namespace KoenZomers.Ring.Api
             return await _httpUtility.DownloadFile(uri);
         }
 
+        /// <summary>
+        /// Searches historical video events for a device.
+        /// </summary>
+        public async Task<VideoSearchResponse> SearchVideoHistory(int doorbotId, DateTime start, DateTime end)
+        {
+            await EnsureSessionValid();
+
+            var dateFrom = new DateTimeOffset(start.ToUniversalTime()).ToUnixTimeMilliseconds();
+            var dateTo = new DateTimeOffset(end.ToUniversalTime()).ToUnixTimeMilliseconds();
+            var uri = new Uri(RingApiBaseUrl, $"video_search/history?doorbot_id={doorbotId}&date_from={dateFrom}&date_to={dateTo}&order=asc&api_version=11&includes%5B%5D=pva");
+            var response = await _httpUtility.GetContents(uri, AuthenticationToken, HardwareId);
+            return JsonSerializer.Deserialize<VideoSearchResponse>(response);
+        }
+
         #endregion
     }
 }
