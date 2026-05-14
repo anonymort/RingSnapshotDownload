@@ -12,6 +12,7 @@ using System.Diagnostics;
 using SixLabors.ImageSharp;
 using System.Configuration;
 using KoenZomers.Ring.Api.Exceptions;
+using KoenZomers.Ring.Api.Entities;
 
 namespace KoenZomers.Ring.SnapshotDownload
 {
@@ -174,6 +175,13 @@ namespace KoenZomers.Ring.SnapshotDownload
             }
             else
             {
+                if (Configuration.DownloadAllHistoricalSnapshots)
+                {
+                    await DownloadAllHistoricalSnapshotFootage(session);
+                    Console.WriteLine("Done");
+                    Environment.Exit(0);
+                }
+
                 // By default the screenshot will be tagged with the current date/time unless we can retrieve information from Ring when the latest snapshot was really taken
                 var timeStamp = DateTime.Now;
 
@@ -350,6 +358,104 @@ namespace KoenZomers.Ring.SnapshotDownload
             {
                 Configuration.ValidateImage = true;
             }
+
+            if (args.Contains("-dlall"))
+            {
+                Configuration.DownloadAllHistoricalSnapshots = true;
+            }
+
+            if (args.Contains("-dlalldays"))
+            {
+                if (int.TryParse(args[args.IndexOf("-dlalldays") + 1], out int downloadAllDays) && downloadAllDays > 0)
+                {
+                    Configuration.DownloadAllDays = downloadAllDays;
+                }
+            }
+        }
+
+        private static async Task DownloadAllHistoricalSnapshotFootage(Session session)
+        {
+            var outputPath = Path.Combine(Configuration.OutputPath, $"{Configuration.DeviceId} - historical snapshot footage");
+            Directory.CreateDirectory(outputPath);
+
+            var manifest = new List<object>();
+            var totalDownloaded = 0;
+            var now = DateTime.Now;
+            var start = now.Date.AddDays(-Configuration.DownloadAllDays + 1);
+
+            Console.WriteLine($"Experimental historical snapshot footage download for device {Configuration.DeviceId}");
+            Console.WriteLine($"Requesting {Configuration.DownloadAllDays} day(s), from {start:yyyy-MM-dd} through {now:yyyy-MM-dd}");
+            Console.WriteLine($"Saving files to {outputPath}");
+            Console.WriteLine();
+
+            for (var day = start.Date; day <= now.Date; day = day.AddDays(1))
+            {
+                var dayStart = day;
+                var dayEnd = day == now.Date ? now : day.AddDays(1).AddMilliseconds(-1);
+
+                Console.Write($"Querying {dayStart:yyyy-MM-dd}... ");
+                PeriodicFootageResponse response;
+                try
+                {
+                    response = await session.GetPeriodicalFootage(Configuration.DeviceId.Value, dayStart, dayEnd);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"Failed: {e.Message}");
+                    continue;
+                }
+
+                var clips = response?.Data?.Where(c => !c.Deleted && !string.IsNullOrWhiteSpace(c.Url)).ToList() ?? new List<PeriodicFootage>();
+                Console.WriteLine($"{clips.Count} clip(s)");
+
+                foreach (var clip in clips)
+                {
+                    var clipStart = DateTimeOffset.FromUnixTimeMilliseconds(clip.StartMilliseconds).LocalDateTime;
+                    var clipEnd = DateTimeOffset.FromUnixTimeMilliseconds(clip.EndMilliseconds).LocalDateTime;
+                    var fileName = $"{Configuration.DeviceId} - {clipStart:yyyy-MM-dd HH-mm-ss} - {clipEnd:HH-mm-ss} - {SanitizeFileName(clip.Kind ?? "periodical")}.mp4";
+                    var filePath = Path.Combine(outputPath, fileName);
+
+                    Console.Write($"  Downloading {fileName}... ");
+                    try
+                    {
+                        using var stream = await session.DownloadPeriodicalFootage(new Uri(clip.Url));
+                        using var file = File.Create(filePath);
+                        await stream.CopyToAsync(file);
+                        totalDownloaded++;
+                        manifest.Add(new
+                        {
+                            file = fileName,
+                            clip.Kind,
+                            start = clipStart,
+                            end = clipEnd,
+                            playbackMilliseconds = clip.PlaybackMilliseconds,
+                            snapshotCount = clip.Snapshots?.Count ?? 0
+                        });
+                        Console.WriteLine("OK");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine($"Failed: {e.Message}");
+                    }
+                }
+            }
+
+            var manifestPath = Path.Combine(outputPath, "manifest.json");
+            await File.WriteAllTextAsync(manifestPath, System.Text.Json.JsonSerializer.Serialize(manifest, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+            Console.WriteLine();
+            Console.WriteLine($"Downloaded {totalDownloaded} historical snapshot footage clip(s).");
+            Console.WriteLine($"Manifest saved to {manifestPath}");
+        }
+
+        private static string SanitizeFileName(string value)
+        {
+            foreach (var invalidCharacter in Path.GetInvalidFileNameChars())
+            {
+                value = value.Replace(invalidCharacter, '-');
+            }
+
+            return value;
         }
 
         /// <summary>
@@ -368,6 +474,8 @@ namespace KoenZomers.Ring.SnapshotDownload
             Console.WriteLine("forceupdate: Requests the Ring device to capture a new snapshot before downloading. If not provided, the latest cached snapshot will be taken.");
             Console.WriteLine("validateimage: Run a check to try to validate if the downloaded image file is valid. Will retry with the maxretries value if its not valid.");
             Console.WriteLine("maxretries: Amount of times to retry downloading the snapshot when Ring returns an error. 3 is default.");
+            Console.WriteLine("dlall: Experimental. Downloads historical periodic snapshot footage clips, where available.");
+            Console.WriteLine("dlalldays: Number of days to query with -dlall. 14 is default.");
             Console.WriteLine();
             Console.WriteLine("Example:");
             Console.WriteLine("   RingSnapshotDownload -username my@email.com -password mypassword -deviceid 12345 -forceupdate -out d:\\screenshots");

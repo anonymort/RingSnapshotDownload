@@ -49,6 +49,52 @@ For extra explanations while it runs, use verbose log mode:
 ./rsw.sh --log
 ```
 
+To try downloading historical snapshot capture footage, use experimental `--dlall` mode:
+
+```bash
+./rsw.sh --log --dlall
+```
+
+`--dlall` asks Ring for historical periodic footage clips for the selected device. Ring returns MP4 clips created from periodic snapshots when they are available, not individual JPEG snapshots. By default it checks the last 14 days:
+
+```bash
+./rsw.sh --log --dlall --dlall-days 7
+```
+
+To turn those downloaded MP4 clips into local JPG snapshots, add `--dlall-extract`:
+
+```bash
+./rsw.sh --log --dlall --dlall-extract
+```
+
+By default this extracts one JPG frame per second from each downloaded MP4. Choose a different interval like this:
+
+```bash
+./rsw.sh --log --dlall --dlall-extract --dlall-extract-interval 5
+```
+
+That example extracts one JPG every 5 seconds.
+
+Frame extraction is local-only and uses `ffmpeg`. Install it on macOS with:
+
+```bash
+brew install ffmpeg
+```
+
+If you run `--dlall-extract` and `ffmpeg` is missing, the wizard will ask whether to install it with Homebrew. If Homebrew is not installed, it will print manual install instructions.
+
+Historical downloads are saved under:
+
+```text
+snapshots/<device-id> - historical snapshot footage/
+```
+
+Extracted JPG frames are saved under:
+
+```text
+snapshots/<device-id> - historical snapshot footage/jpg-frames/
+```
+
 The wizard will:
 
 1. Show an Anonymort ASCII logo.
@@ -194,6 +240,20 @@ Keep this file private. Anyone with the refresh token may be able to access your
 | `-forceupdate` | Ask Ring for a fresh snapshot instead of using the cached one. |
 | `-validateimage` | Check that the downloaded file is a real image. |
 | `-maxretries` | Number of retry attempts when Ring is slow or returns an error. Default is `3`. |
+| `-dlall` | Experimental. Download historical periodic snapshot footage clips, where Ring returns them. |
+| `-dlalldays` | Number of days to query with `-dlall`. Default is `14`. |
+
+## Historical Snapshot Strategy
+
+Ring's current mobile-style endpoints do not clearly expose every historical snapshot as an individual JPEG. The available historical path this tool uses is Ring's periodic footage endpoint:
+
+```text
+https://api.ring.com/recordings/public/footages/{device-id}
+```
+
+That endpoint can return MP4 clips built from periodic snapshot capture. The tool saves those clips and writes a `manifest.json` file with clip metadata.
+
+If you pass `--dlall-extract`, the wrapper then uses local `ffmpeg` to extract JPG frames from those MP4 clips. This means the JPG files are generated locally from downloaded footage; they are not separate JPEG files returned directly by Ring.
 
 ## Current Status
 

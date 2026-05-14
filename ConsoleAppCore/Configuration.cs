@@ -68,6 +68,18 @@ namespace KoenZomers.Ring.SnapshotDownload
         public short MaximumRetries { get; set; } = 3;
 
         /// <summary>
+        /// Try to download historical periodic snapshot footage for the selected device.
+        /// </summary>
+        [JsonIgnore]
+        public bool DownloadAllHistoricalSnapshots { get; set; } = false;
+
+        /// <summary>
+        /// Number of days of historical periodic footage to request.
+        /// </summary>
+        [JsonIgnore]
+        public int DownloadAllDays { get; set; } = 14;
+
+        /// <summary>
         /// Tries to retrieve the configuration from the configuration file located at <paramref name="path"/>
         /// </summary>
         /// <param name="path">Full path to the file containing the application settings</param>

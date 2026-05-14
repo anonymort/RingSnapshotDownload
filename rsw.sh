@@ -5,6 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$ROOT_DIR/ConsoleAppCore/ConsoleAppCore.csproj"
 SOLUTION="$ROOT_DIR/KoenZomers.Ring.SnapshotDownload.sln"
 VERBOSE=false
+DLALL=false
+DLALL_DAYS=14
+DLALL_EXTRACT=false
+DLALL_EXTRACT_INTERVAL=1
 
 bold="$(printf '\033[1m')"
 dim="$(printf '\033[2m')"
@@ -16,10 +20,17 @@ reset="$(printf '\033[0m')"
 
 usage() {
   cat <<EOF
-Usage: ./rsw.sh [--log]
+Usage: ./rsw.sh [--log] [--dlall] [--dlall-days DAYS] [--dlall-extract] [--dlall-extract-interval SECONDS]
 
 Options:
   --log     Print extra explanations before and after each major command.
+  --dlall   Experimental: download all historical periodic snapshot footage clips Ring returns.
+  --dlall-days DAYS
+            Number of days to query with --dlall. Default: 14.
+  --dlall-extract
+            After --dlall downloads MP4 clips, extract local JPG frames with ffmpeg.
+  --dlall-extract-interval SECONDS
+            Extract one JPG frame every N seconds. Default: 1.
   -h, --help
             Show this help.
 EOF
@@ -30,6 +41,33 @@ while [[ $# -gt 0 ]]; do
     --log)
       VERBOSE=true
       shift
+      ;;
+    --dlall)
+      DLALL=true
+      shift
+      ;;
+    --dlall-extract)
+      DLALL=true
+      DLALL_EXTRACT=true
+      shift
+      ;;
+    --dlall-extract-interval)
+      if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        printf 'Expected a positive number after --dlall-extract-interval.\n'
+        usage
+        exit 1
+      fi
+      DLALL_EXTRACT_INTERVAL="$2"
+      shift 2
+      ;;
+    --dlall-days)
+      if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+        printf 'Expected a positive number after --dlall-days.\n'
+        usage
+        exit 1
+      fi
+      DLALL_DAYS="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -130,6 +168,75 @@ run_ring() {
   "$DOTNET" run --project "$PROJECT" --configuration Release -- "$@"
 }
 
+extract_frames() {
+  local footage_dir="$1"
+  local frames_dir="$footage_dir/jpg-frames"
+  local clips=()
+  local clip
+  local clip_name
+  local output_pattern
+
+  ensure_ffmpeg
+
+  while IFS= read -r -d '' clip; do
+    clips+=("$clip")
+  done < <(find "$footage_dir" -maxdepth 1 -type f -name '*.mp4' -print0 | sort -z)
+
+  if [[ "${#clips[@]}" -eq 0 ]]; then
+    say "${yellow}No MP4 files found to extract from:${reset} $footage_dir"
+    return 0
+  fi
+
+  mkdir -p "$frames_dir"
+  say "${bold}Step 3: Extracting local JPG frames${reset}"
+  say "Extracting one frame every ${DLALL_EXTRACT_INTERVAL} second(s) into:"
+  say "$frames_dir"
+  say
+
+  for clip in "${clips[@]}"; do
+    clip_name="$(basename "$clip" .mp4)"
+    clip_name="${clip_name// /_}"
+    output_pattern="$frames_dir/${clip_name}_frame_%06d.jpg"
+    log_command "ffmpeg -hide_banner -loglevel error -i \"$clip\" -vf fps=1/$DLALL_EXTRACT_INTERVAL -q:v 2 \"$output_pattern\""
+    ffmpeg -hide_banner -loglevel error -i "$clip" -vf "fps=1/$DLALL_EXTRACT_INTERVAL" -q:v 2 "$output_pattern"
+    say "${green}Extracted frames from:${reset} $(basename "$clip")"
+  done
+}
+
+ensure_ffmpeg() {
+  if command -v ffmpeg >/dev/null 2>&1; then
+    log "ffmpeg found at: $(command -v ffmpeg)"
+    return 0
+  fi
+
+  say "${yellow}ffmpeg is required for --dlall-extract but is not installed.${reset}"
+
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+    if confirm "Install ffmpeg now with Homebrew" "y"; then
+      log_command "brew install ffmpeg"
+      brew install ffmpeg
+      if command -v ffmpeg >/dev/null 2>&1; then
+        say "${green}ffmpeg installed.${reset}"
+        return 0
+      fi
+
+      say "${red}Homebrew finished, but ffmpeg is still not on PATH.${reset}"
+      return 1
+    fi
+
+    say "Install later with: brew install ffmpeg"
+    return 1
+  fi
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    say "Install Homebrew from https://brew.sh, then run: brew install ffmpeg"
+  else
+    say "Install ffmpeg with your package manager, then rerun this command."
+  fi
+
+  return 1
+}
+
 describe_ring_output() {
   log "Output below comes from RingSnapshotDownload, the .NET console app."
   log "If Ring requires 2FA, the app will pause and wait for the code in this terminal."
@@ -138,6 +245,12 @@ describe_ring_output() {
 
 banner
 say "${bold}Welcome.${reset} This wizard will list your Ring devices and download one snapshot."
+if [[ "$DLALL" == true ]]; then
+  say "${yellow}Experimental --dlall mode is on.${reset} I will try to download historical periodic snapshot footage."
+  if [[ "$DLALL_EXTRACT" == true ]]; then
+    say "${yellow}Local frame extraction is on.${reset} I will use ffmpeg to turn downloaded MP4s into JPG frames."
+  fi
+fi
 say "${yellow}Your password is hidden while typing. Do not share Settings.json or refresh tokens.${reset}"
 if [[ "$VERBOSE" == true ]]; then
   say "${cyan}Verbose log mode is on.${reset} I will explain each command and what its output means."
@@ -208,6 +321,35 @@ mkdir -p "$output_dir"
 log "Snapshots will be saved under: $output_dir"
 
 args=(-username "$email" -password "$password" -deviceid "$device_id" -out "$output_dir")
+
+if [[ "$DLALL" == true ]]; then
+  args+=(-dlall -dlalldays "$DLALL_DAYS")
+  footage_dir="$output_dir/$device_id - historical snapshot footage"
+
+  say
+  say "${bold}Step 2: Downloading historical snapshot footage${reset}"
+  say "${yellow}This uses Ring's periodical footage endpoint. Returned files are MP4 clips made from periodic snapshots, not individual JPEG files.${reset}"
+  say
+  log "The app will query $DLALL_DAYS day(s) and save returned footage clips plus a manifest."
+  log_command "$DOTNET run --project \"$PROJECT\" --configuration Release -- -username \"$email\" -password \"********\" -deviceid \"$device_id\" -out \"$output_dir\" -dlall -dlalldays \"$DLALL_DAYS\""
+  describe_ring_output
+  if ! run_ring "${args[@]}"; then
+    say
+    say "${red}Historical snapshot footage download failed.${reset}"
+    say "Ring may not have periodical footage available for this device/date range."
+    exit 1
+  fi
+
+  if [[ "$DLALL_EXTRACT" == true ]]; then
+    say
+    extract_frames "$footage_dir"
+  fi
+
+  say
+  say "${green}Finished.${reset} Check this folder:"
+  say "$output_dir"
+  exit 0
+fi
 
 if confirm "Force Ring to capture a fresh snapshot" "y"; then
   args+=(-forceupdate)

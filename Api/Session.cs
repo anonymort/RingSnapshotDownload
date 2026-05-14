@@ -469,6 +469,28 @@ namespace KoenZomers.Ring.Api
             return doorbotTimestamps;
         }
 
+        /// <summary>
+        /// Returns historical periodic footage clips created by Ring from snapshot capture.
+        /// </summary>
+        public async Task<PeriodicFootageResponse> GetPeriodicalFootage(int doorbotId, DateTime start, DateTime end)
+        {
+            await EnsureSessionValid();
+
+            var startAtMs = new DateTimeOffset(start.ToUniversalTime()).ToUnixTimeMilliseconds();
+            var endAtMs = new DateTimeOffset(end.ToUniversalTime()).ToUnixTimeMilliseconds();
+            var uri = new Uri($"https://api.ring.com/recordings/public/footages/{doorbotId}?start_at_ms={startAtMs}&end_at_ms={endAtMs}&kinds=online_periodical&kinds=offline_periodical");
+            var response = await _httpUtility.GetContents(uri, AuthenticationToken, HardwareId);
+            return JsonSerializer.Deserialize<PeriodicFootageResponse>(response);
+        }
+
+        /// <summary>
+        /// Downloads a periodic footage clip from the temporary URL returned by Ring.
+        /// </summary>
+        public async Task<Stream> DownloadPeriodicalFootage(Uri uri)
+        {
+            return await _httpUtility.DownloadFile(uri);
+        }
+
         #endregion
     }
 }
