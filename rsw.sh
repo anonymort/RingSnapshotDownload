@@ -15,13 +15,13 @@ reset="$(printf '\033[0m')"
 
 banner() {
   cat <<'EOF'
-    ___    _   _   ___    _   _  __   __  __  __   ___    ____   _____
-   / _ \  | \ | | / _ \  | \ | | \ \ / / |  \/  | / _ \  |  _ \ |_   _|
-  | |_| | |  \| || | | | |  \| |  \ V /  | |\/| || | | | | |_| |  | |
-  |  _  | | |\  || |_| | | |\  |   | |   | |  | || |_| | |  _ <   | |
-  |_| |_| |_| \_| \___/  |_| \_|   |_|   |_|  |_| \___/  |_| \_\  |_|
+    .aMMMb  dMMMMb  .aMMMb  dMMMMb  dMP dMP dMMMMMMMMb  .aMMMb  dMMMMb dMMMMMMP
+   dMP"dMP dMP dMP dMP"dMP dMP dMP dMP.dMP dMP"dMP"dMP dMP"dMP dMP.dMP   dMP
+  dMMMMMP dMP dMP dMP dMP dMP dMP  VMMMMP dMP dMP dMP dMP dMP dMMMMK"   dMP
+ dMP dMP dMP dMP dMP.aMP dMP dMP dA .dMP dMP dMP dMP dMP.aMP dMP"AMF   dMP
+dMP dMP dMP dMP  VMMMP" dMP dMP  VMMMP" dMP dMP dMP  VMMMP" dMP dMP   dMP
 
-                     R I N G   S N A P S H O T   W I Z A R D
+                       R I N G   S N A P S H O T   W I Z A R D
 EOF
 }
 
