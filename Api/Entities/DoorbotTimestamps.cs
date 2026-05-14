@@ -12,6 +12,6 @@ namespace KoenZomers.Ring.Api.Entities
         /// Collection of doorbot timestamps
         /// </summary>
         [JsonPropertyName("timestamps")]
-        public List<DoorbotTimestamp> Timestamp { get; set; }
+        public List<DoorbotTimestamp> Timestamp { get; set; } = new();
     }
 }

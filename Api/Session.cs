@@ -39,6 +39,11 @@ namespace KoenZomers.Ring.Api
         public Uri RingApiBaseUrl => new Uri("https://api.ring.com/clients_api/");
 
         /// <summary>
+        /// Base Uri used by the current Ring snapshot service.
+        /// </summary>
+        public Uri RingSnapshotBaseUrl => new Uri("https://app-snaps.ring.com/snapshots/");
+
+        /// <summary>
         /// Boolean indicating if the current session is authenticated
         /// </summary>
         public bool IsAuthenticated => OAuthToken != null;
@@ -180,7 +185,7 @@ namespace KoenZomers.Ring.Api
 
 
             string json = $"{{ \"device\": {{ \"metadata\" : {{ \"api_version\" : 11, \"device_model\": \"ring-client-api\"  }}, \"hardware_id\" : \"{HardwareId}\", \"os\" : \"android\"  }}}}";
-            var sessionResponse = await _httpUtility.SendRequest(new Uri(RingApiBaseUrl, "session"), httpMethod: System.Net.Http.HttpMethod.Post, json, OAuthToken.AccessToken);
+            var sessionResponse = await _httpUtility.SendRequest(new Uri(RingApiBaseUrl, "session"), httpMethod: System.Net.Http.HttpMethod.Post, json, OAuthToken.AccessToken, HardwareId);
 
             // Deserialize the JSON result into a typed object
             var session = JsonSerializer.Deserialize<Session>(sessionResponse);
@@ -272,7 +277,7 @@ namespace KoenZomers.Ring.Api
             }
 
             // Ensure the access token in the session is still valid
-            if (OAuthToken.ExpiresAt < DateTime.Now)
+            if (OAuthToken.ExpiresAt < DateTime.UtcNow)
             {
                 // Access token is no longer valid, check if we have a refresh token available to refresh the session
                 if (string.IsNullOrEmpty(OAuthToken.RefreshToken))
@@ -303,7 +308,7 @@ namespace KoenZomers.Ring.Api
         {
             await EnsureSessionValid();
 
-            var response = await _httpUtility.GetContents(new Uri(RingApiBaseUrl, $"ring_devices"), AuthenticationToken);
+            var response = await _httpUtility.GetContents(new Uri(RingApiBaseUrl, $"ring_devices"), AuthenticationToken, HardwareId);
 
             var devices = JsonSerializer.Deserialize<Devices>(response);
             return devices;
@@ -331,7 +336,7 @@ namespace KoenZomers.Ring.Api
             for (var downloadAttempt = 1; downloadAttempt < 60; downloadAttempt++)
             {
                 // Request to download the recording
-                var response = await _httpUtility.GetContents(downloadRequestUri, AuthenticationToken);
+                var response = await _httpUtility.GetContents(downloadRequestUri, AuthenticationToken, HardwareId);
 
                 // Parse the result
                 downloadResult = JsonSerializer.Deserialize<DownloadRecording>(response);
@@ -354,7 +359,7 @@ namespace KoenZomers.Ring.Api
             }
 
             // Request the file download from the returned URI
-            var stream = await _httpUtility.DownloadFile(downloadUri);
+            var stream = await _httpUtility.DownloadFile(downloadUri, hardwareId: HardwareId);
             return stream;
         }
 
@@ -390,15 +395,27 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<Stream> GetLatestSnapshot(int doorbotId)
+        public async Task<Stream> GetLatestSnapshot(int doorbotId, bool forceRefresh = false, long? afterMilliseconds = null)
         {
             await EnsureSessionValid();
 
-            // Construct the URL where to download the latest doorbot snapshot from
-            var downloadSnapshotUri = new Uri(RingApiBaseUrl, $"snapshots/image/{doorbotId}");
+            var queryParts = new List<string>();
+            if (afterMilliseconds.HasValue)
+            {
+                queryParts.Add($"after-ms={afterMilliseconds.Value}");
+            }
+            if (forceRefresh)
+            {
+                queryParts.Add("extras=force");
+            }
+
+            var queryString = queryParts.Count > 0 ? $"?{string.Join("&", queryParts)}" : string.Empty;
+
+            // Current Ring clients use the app-snaps endpoint for image retrieval.
+            var downloadSnapshotUri = new Uri(RingSnapshotBaseUrl, $"next/{doorbotId}{queryString}");
 
             // Request the snapshot
-            var stream = await _httpUtility.DownloadFile(downloadSnapshotUri, AuthenticationToken);
+            var stream = await _httpUtility.DownloadFile(downloadSnapshotUri, AuthenticationToken, HardwareId);
             return stream;
         }
 
@@ -424,7 +441,7 @@ namespace KoenZomers.Ring.Api
             var bodyContent = string.Concat(@"{ ""doorbot_ids"": [", doorbotId, @"], ""refresh"": true }");
 
             // Send the request
-            await _httpUtility.SendRequestWithExpectedStatusOutcome(updateSnapshotUri, System.Net.Http.HttpMethod.Put, System.Net.HttpStatusCode.NoContent, bodyContent, AuthenticationToken);
+            await _httpUtility.SendRequestWithExpectedStatusOutcome(updateSnapshotUri, System.Net.Http.HttpMethod.Put, System.Net.HttpStatusCode.NoContent, bodyContent, AuthenticationToken, HardwareId);
         }
 
         /// <summary>
@@ -448,7 +465,7 @@ namespace KoenZomers.Ring.Api
             var bodyContent = string.Concat(@"{ ""doorbot_ids"": [", doorbotId, @"]}");
 
             // Send the request
-            var doorbotTimestamps = await _httpUtility.SendRequest<DoorbotTimestamps>(updateSnapshotUri, System.Net.Http.HttpMethod.Post, bodyContent, AuthenticationToken);
+            var doorbotTimestamps = await _httpUtility.SendRequest<DoorbotTimestamps>(updateSnapshotUri, System.Net.Http.HttpMethod.Post, bodyContent, AuthenticationToken, HardwareId);
             return doorbotTimestamps;
         }
 

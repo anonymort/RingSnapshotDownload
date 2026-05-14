@@ -103,9 +103,9 @@ namespace KoenZomers.Ring.SnapshotDownload
         /// <summary>
         /// Stores the current configuration in the application configuration file
         /// </summary>
-        public async void Save()
+        public Task Save()
         {
-            await File.WriteAllTextAsync(ConfigFilePath, JsonSerializer.Serialize(this));
+            return File.WriteAllTextAsync(ConfigFilePath, JsonSerializer.Serialize(this));
         }
     }
 }

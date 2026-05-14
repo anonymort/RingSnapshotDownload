@@ -7,9 +7,11 @@ using System.Threading.Tasks;
 using System.Threading;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Diagnostics;
 using SixLabors.ImageSharp;
 using System.Configuration;
+using KoenZomers.Ring.Api.Exceptions;
 
 namespace KoenZomers.Ring.SnapshotDownload
 {
@@ -113,7 +115,7 @@ namespace KoenZomers.Ring.SnapshotDownload
             if (session.OAuthToken != null)
             {
                 Configuration.RefreshToken = session.OAuthToken.RefreshToken;
-                Configuration.Save();
+                await Configuration.Save();
             }
 
             if (Configuration.ListBots)
@@ -156,33 +158,31 @@ namespace KoenZomers.Ring.SnapshotDownload
             }
             else
             {
-                if(Configuration.ForceUpdateSnapshot)
-                {
-                    Console.WriteLine("Requesting Ring device to capture a new snapshot");
-                    await session.UpdateSnapshot(Configuration.DeviceId.Value);
-
-                    // Give it timt to process the update
-                    Thread.Sleep(TimeSpan.FromSeconds(1));
-                }
-
                 // By default the screenshot will be tagged with the current date/time unless we can retrieve information from Ring when the latest snapshot was really taken
                 var timeStamp = DateTime.Now;
 
                 // Retrieve when the latest available snapshot was taken
-                var doorbotTimeStamps = await session.GetDoorbotSnapshotTimestamp(Configuration.DeviceId.Value);
-                
-                // Validate if we received timestamps
-                if(doorbotTimeStamps.Timestamp.Count > 0)
+                try
                 {
-                    // Filter out timestamps which are not for the doorbot we are requesting and take the most recent snapshot only
-                    var latestDoorbotTimeStamp = doorbotTimeStamps.Timestamp.Where(t => t.DoorbotId.HasValue && t.DoorbotId.Value == Configuration.DeviceId.Value).OrderByDescending(t => t.TimestampEpoch).FirstOrDefault();
+                    var doorbotTimeStamps = await session.GetDoorbotSnapshotTimestamp(Configuration.DeviceId.Value);
 
-                    // If we have a result and the result has an Epoch timestamp on it, use that as the marker for when the screenshot has been taken
-                    if (latestDoorbotTimeStamp != null && latestDoorbotTimeStamp.TimestampEpoch.HasValue)
+                    // Validate if we received timestamps
+                    if(doorbotTimeStamps.Timestamp.Count > 0)
                     {
-                        // Convert from the Epoch time to a DateTime we can use
-                        timeStamp = latestDoorbotTimeStamp.Timestamp.Value;
+                        // Filter out timestamps which are not for the doorbot we are requesting and take the most recent snapshot only
+                        var latestDoorbotTimeStamp = doorbotTimeStamps.Timestamp.Where(t => t.DoorbotId.HasValue && t.DoorbotId.Value == Configuration.DeviceId.Value).OrderByDescending(t => t.TimestampEpoch).FirstOrDefault();
+
+                        // If we have a result and the result has an Epoch timestamp on it, use that as the marker for when the screenshot has been taken
+                        if (latestDoorbotTimeStamp != null && latestDoorbotTimeStamp.TimestampEpoch.HasValue)
+                        {
+                            // Convert from the Epoch time to a DateTime we can use
+                            timeStamp = latestDoorbotTimeStamp.Timestamp.Value;
+                        }
                     }
+                }
+                catch (Exception e) when (e is DeviceUnknownException || e is HttpRequestException)
+                {
+                    Console.WriteLine($"Unable to retrieve snapshot timestamp, using the current time instead: {e.Message}");
                 }
 
                 // Construct the filename and path where to save the file
@@ -197,20 +197,23 @@ namespace KoenZomers.Ring.SnapshotDownload
                 do
                 {
                     attempt++;
+                    downloadSucceeded = false;
+                    imageValidationSucceeded = true;
+                    savingSucceeded = false;
 
                     Stream imageStream = null;
                     try
                     {
                         Console.Write($"Downloading snapshot from Ring device with ID {Configuration.DeviceId}... ");
 
-                        imageStream = await session.GetLatestSnapshot(Configuration.DeviceId.Value);
+                        imageStream = await session.GetLatestSnapshot(Configuration.DeviceId.Value, Configuration.ForceUpdateSnapshot);
                         downloadSucceeded = true;
                         
                         Console.WriteLine("OK");
                     }
                     catch (Exception e)
                     {
-                        if (e is WebException webEx && webEx.Message.Contains("404"))
+                        if ((e is WebException webEx && webEx.Message.Contains("404")) || e is DeviceUnknownException)
                         {
                             // Ring tends to throw a 404 if it has no snapshot available and couldn't retrieve one in time, retry it
                             Console.WriteLine($"Failed: not found returned by Ring API, retrying ({attempt}/{Configuration.MaximumRetries})");
@@ -229,6 +232,10 @@ namespace KoenZomers.Ring.SnapshotDownload
                         try
                         {
                             await Image.DetectFormatAsync(imageStream);
+                            if (imageStream.CanSeek)
+                            {
+                                imageStream.Position = 0;
+                            }
 
                             Console.WriteLine("OK");
                         }

@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>KoenZomers.Ring.SnapshotDownload</RootNamespace>
     <AssemblyName>RingSnapshotDownload</AssemblyName>
     <PackageId>KoenZomers.Ring.SnapshotDownload</PackageId>
@@ -12,8 +12,8 @@
     <Description>Allows downloading of the latest available snapshot from Ring devices to your local machine</Description>
     <Copyright>Koen Zomers</Copyright>
     <PackageProjectUrl>https://github.com/KoenZomers/RingSnapshotDownload</PackageProjectUrl>
-    <PackageTags>Ring;Ring Doorbell;C#;dotnet6</PackageTags>
-    <PackageReleaseNotes>- Updated Session creation APIs to comply with the new Ring APIs</PackageReleaseNotes>
+    <PackageTags>Ring;Ring Doorbell;C#;dotnet8</PackageTags>
+    <PackageReleaseNotes>- Updated runtime support and Ring snapshot endpoints</PackageReleaseNotes>
     <AssemblyVersion>3.0.0.0</AssemblyVersion>
     <FileVersion>3.0.0.0</FileVersion>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
@@ -49,8 +49,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.5" />
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.8" />
   </ItemGroup>
 
   <ItemGroup>

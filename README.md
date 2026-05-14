@@ -1,119 +1,181 @@
-[![licence badge]][licence]
-[![stars badge]][stars]
-[![forks badge]][forks]
-[![issues badge]][issues]
-[![.NET Core](https://github.com/KoenZomers/RingSnapshotDownload/actions/workflows/ci.yaml/badge.svg)](https://github.com/KoenZomers/RingSnapshotDownload/actions/workflows/ci.yaml)
+# Ring Snapshot Download
 
-[licence badge]:https://img.shields.io/badge/license-Apache2-blue.svg
-[stars badge]:https://img.shields.io/github/stars/koenzomers/RingSnapshotDownload.svg
-[forks badge]:https://img.shields.io/github/forks/koenzomers/RingSnapshotDownload.svg
-[issues badge]:https://img.shields.io/github/issues/koenzomers/RingSnapshotDownload.svg
+A small command-line tool that downloads the latest snapshot image from a Ring camera or doorbell.
 
+Think of it like this:
 
-[licence]:https://github.com/koenzomers/RingSnapshotDownload/blob/master/LICENSE.md
-[stars]:https://github.com/koenzomers/RingSnapshotDownload/stargazers
-[forks]:https://github.com/koenzomers/RingSnapshotDownload/network
-[issues]:https://github.com/koenzomers/RingSnapshotDownload/issues
+1. You sign in to Ring once.
+2. The app asks Ring for your cameras.
+3. You pick a device ID.
+4. The app saves a `.jpg` snapshot to a folder.
+5. The app saves a refresh token in `Settings.json` so future runs can work without asking for your password again.
 
-# Ring Snapshot Download Tool
-Console application written in .NET 6 compiled for Windows, Raspberry Pi, Linux and macOS which allows for downloading of Ring snapshots to your local machine.
+This is an unofficial tool. Ring can change its private API at any time.
 
-## Version History
+## What You Need
 
-[3.0.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/3.0.0.0) - Oct 22, 2024
+- A Ring account.
+- A Ring camera or doorbell that supports snapshots.
+- .NET 8 SDK if you want to build from source.
 
-- Updated Session creation APIs to comply with the new Ring APIs.
+Download .NET 8 from:
 
-[2.1.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/2.1.0.0) - September 3, 2023
+```text
+https://dotnet.microsoft.com/download/dotnet/8.0
+```
 
-- Modified the error handling while downloading an image slightly
+Released builds are self-contained, so users of a packaged release do not need to install .NET.
 
-[2.0.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/2.0.0.0) - September 3, 2023
+## Build
 
-- Completely removed the dependance on the Ring API package. Only kept a bare minimum version of the model inside this application to avoid conflicts and parsing issues as much as possible.
-- Fixed an issue with the OSX x64 build
-- Added an OSX ARM64 build
+From the project folder:
 
-[1.4.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.4.0.0) - September 2, 2023
+```bash
+dotnet restore
+dotnet build KoenZomers.Ring.SnapshotDownload.sln --configuration Release
+```
 
-- Added -validateimage option that will check if the downloaded image is valid
-- Upgraded to [Ring API v0.5.3.0](https://github.com/KoenZomers/RingApi#version-history)
+## Test
 
-[1.3.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.3.0.0) - July 4, 2023
+There are no automated unit tests in this repository yet. Use these checks before publishing or using a build:
 
-- Upgraded to [Ring API v0.5.2.0](https://github.com/KoenZomers/RingApi#version-history)
+```bash
+dotnet build KoenZomers.Ring.SnapshotDownload.sln --configuration Release
+dotnet list KoenZomers.Ring.SnapshotDownload.sln package --vulnerable --include-transitive
+dotnet run --project ConsoleAppCore/ConsoleAppCore.csproj --configuration Release --
+```
 
-[1.2.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.2.0.0) - September 14, 2022
+The last command should print the help text and exit because no username or device ID was provided.
 
-- Upgraded to [Ring API v0.5.0.1](https://github.com/KoenZomers/RingApi#version-history)
+## Build A macOS App
 
-[1.1.1.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.1.1.0) - September 14, 2022
+Apple Silicon Mac:
 
-- The tool is now compiled against .NET 6 for [future supportability](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core#lifecycle)
+```bash
+dotnet publish ConsoleAppCore/ConsoleAppCore.csproj \
+  --configuration Release \
+  -r osx-arm64 \
+  --self-contained true \
+  -p:PublishSingleFile=true \
+  -p:PublishTrimmed=false \
+  -o ./release/osx-arm64
+```
 
-[1.1.0.2](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.1.0.2) - July 5, 2021
+Intel Mac:
 
-- Added additional error handling around reading the config file
-- Fixed an issue with reading from the config file on non Windows environments
+```bash
+dotnet publish ConsoleAppCore/ConsoleAppCore.csproj \
+  --configuration Release \
+  -r osx-x64 \
+  --self-contained true \
+  -p:PublishSingleFile=true \
+  -p:PublishTrimmed=false \
+  -o ./release/osx-x64
+```
 
-[1.1.0.1](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.1.0.1) - July 5, 2021
+Run the built file from the output folder:
 
-- Changed configuration handling as the old method wasn't working well in .NET 5. The settings are now stores in Settings.json in the same folder from where you run the tool. Any parameters you provide will be stored in this config file, so you don't have to supply them again on subsequent runs. This new configuration is not backwards compatible with the previous configuration, so if you're upgrading, log in once by providing your username and password via the commandline and the values will get stored in the new config file.
+```bash
+./release/osx-arm64/RingSnapshotDownload
+```
 
-[1.1.0.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.1.0.0) - July 4, 2021
+macOS may warn because local builds are not signed or notarized.
 
-- Updated to .NET 5.0
+## First Run: Find Your Ring Device ID
 
-[1.0.2.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.0.2.0) - June 23, 2020
+Run this:
 
-- Bugfix in two factor authentication not working
-- Bugfix in the counter potentially not showing the proper amount of devices when using -list
-- Added notice if the two factor authentication fails due to too many recent requests for it
+```bash
+dotnet run --project ConsoleAppCore/ConsoleAppCore.csproj --configuration Release -- \
+  -username you@example.com \
+  -password 'your-ring-password' \
+  -list
+```
 
-[1.0.1.0](https://github.com/KoenZomers/RingSnapshotDownload/releases/tag/1.0.1.0) - April 29, 2020
+If your Ring account uses two-factor authentication, the app will ask for the code.
 
-- Changed some async handling of downloads
-- Added check with the Ring API on when the latest available camera capture was taken and use that timestamp in the file so if there is no newer image available, the old one will be overwritten
-- Added a one second delay after doing a force refresh to allow the Ring API to fetch an update from the doorbell
-- Added -maxretries optional flag which allows specifying how many times to retry fetching the snapshot with 1 second intervals if the Ring API returns an error. This happens when Ring has no recent snapshot of your Ring device on file and it couldn't retrieve a new one from the Ring device yet.
-- Updated [Ring API](https://github.com/KoenZomers/RingApi) to [0.4.3.2](https://www.nuget.org/packages/KoenZomers.Ring.Api/0.4.3.2)
+The output will show device IDs. Copy the ID for the camera or doorbell you want.
 
-1.0.0.1 - February 14, 2020
+## Download A Snapshot
 
-- Ring 2 doorbells will now also be returned when doing a `-list`
+Replace `123456` with your device ID:
 
-1.0.0.0 - February 13, 2020
+```bash
+dotnet run --project ConsoleAppCore/ConsoleAppCore.csproj --configuration Release -- \
+  -username you@example.com \
+  -password 'your-ring-password' \
+  -deviceid 123456 \
+  -out ./snapshots \
+  -forceupdate \
+  -validateimage
+```
 
-- Initial version
+The file name will look like this:
 
-## System Requirements
+```text
+123456 - 2026-05-14 12-30-00.jpg
+```
 
-- Either of: Windows x86, Windows x64, Windows ARM (i.e. Windows 10 IoT), Linux ARM (i.e. Raspberry Pi), Linux x64 (any Linux based distribution), Mac OS (Apple devices)
-- For all platforms the application is self containing, so it does not need anything else to be installed on the operating system, not even .NET Core
+## Use A Built Release
 
-## Usage Instructions
+After publishing, run the executable directly instead of `dotnet run`.
 
-1. Download the ZIP file of the latest version from [releases](https://github.com/KoenZomers/RingSnapshotDownload/releases). Make sure you download the right type for the platform on which you want to run it:
-   - Windows 7 SP1 or later, Windows 8.1, Windows 10 version 1607 or later, Windows 11, Windows Server 2012 R2 or later: win-x64.zip (64 bit) or win-x86.zip (32 bit)
-   - Linux ARM (i.e. Raspberry Pi): linux-arm.zip (32 bit) or linux-arm64.zip (64 bit)
-   - Linux x64 (any Linux based distribution): linux-x64.zip
-   - Mac OSX (Apple devices): osx-x64.zip or osx-arm64.zip
-2. Extract it to any location on your machine
-3. Run RingSnapshotDownload.exe in a Command Prompt or PowerShell window to see the possible parameters and samples
+Example:
 
-![](./Screenshots/CommandLineOptions.png)
+```bash
+./RingSnapshotDownload \
+  -username you@example.com \
+  -password 'your-ring-password' \
+  -deviceid 123456 \
+  -out ./snapshots \
+  -forceupdate \
+  -validateimage
+```
 
-![](./Screenshots/SampleExecution.png)
+On Windows, use:
 
-![](./Screenshots/Files.png)
+```powershell
+.\RingSnapshotDownload.exe -username you@example.com -password "your-ring-password" -deviceid 123456 -out .\snapshots -forceupdate -validateimage
+```
 
-If you want to run this application unattended in i.e. a scheduled daily download script, ensure you run it once manually with your username and password. After this run it will store the refresh token in a file called Settings.json and will run without needing a username, password or two factor authentication token on subsequent runs.
+## Settings.json
 
-## Current functionality
+The app stores settings next to the executable in `Settings.json`.
 
-With this tool in its current state you can:
+Most importantly, it stores `RingRefreshToken`. That lets the app sign in again later without your password.
 
-- Log on once to a two factor authentication enabled Ring account and then have it use the retrieved refresh token to run unattended on subsequent runs
-- Download the latest snapshot from your Ring device
-- List all Ring doorbells and Ring stickupcams you have available under your Ring account
-- Force the Ring device to capture a fresh snapshot
+Keep this file private. Anyone with the refresh token may be able to access your Ring account through this tool.
+
+## Command Options
+
+| Option | Meaning |
+| --- | --- |
+| `-username` | Ring account email address. |
+| `-password` | Ring account password. |
+| `-list` | Show your Ring devices and IDs. |
+| `-deviceid` | The Ring device ID to download from. |
+| `-out` | Folder where the snapshot should be saved. |
+| `-forceupdate` | Ask Ring for a fresh snapshot instead of using the cached one. |
+| `-validateimage` | Check that the downloaded file is a real image. |
+| `-maxretries` | Number of retry attempts when Ring is slow or returns an error. Default is `3`. |
+
+## Current Status
+
+This version:
+
+- Targets .NET 8.
+- Uses Ring's current app snapshot endpoint.
+- Supports Windows, Linux, Raspberry Pi, Intel macOS, and Apple Silicon macOS builds.
+- Uses refresh tokens for unattended runs after the first login.
+- Handles two-factor authentication during the first login.
+
+## Important Notes
+
+- This is not the official Ring Partner API.
+- It uses the same private/mobile-style Ring API pattern used by unofficial Ring clients.
+- Ring may change or block these endpoints without notice.
+- Snapshot availability depends on your device, Ring settings, motion settings, subscription, and whether the device is online.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

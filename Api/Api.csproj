@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>KoenZomers.Ring.Api</RootNamespace>
     <SignAssembly>True</SignAssembly>
     <AssemblyOriginatorKeyFile>..\KoenZomers.Ring.SnapshotDownload.snk</AssemblyOriginatorKeyFile>
@@ -12,7 +12,7 @@
     <Description>API in .NET to communicate with the Ring Doorbell service</Description>
     <PackageProjectUrl>https://github.com/KoenZomers/RingApi</PackageProjectUrl>
     <AssemblyVersion>0.5.3</AssemblyVersion>
-    <PackageReleaseNotes>- Fixed a few more issues with Ring devices not properly being parsed</PackageReleaseNotes>
+    <PackageReleaseNotes>- Updated runtime support and Ring snapshot endpoints</PackageReleaseNotes>
     <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
     <Copyright>Koen Zomers</Copyright>
     <FileVersion>0.5.3</FileVersion>

@@ -15,6 +15,16 @@ namespace KoenZomers.Ring.Api.Entities
         public string AccessToken { get; set; }
 
         /// <summary>
+        /// The number of seconds after which the access token expires.
+        /// </summary>
+        [JsonPropertyName("expires_in")]
+        public int ExpiresIn
+        {
+            get => (int)Math.Max(0, (ExpiresAt - DateTime.UtcNow).TotalSeconds);
+            set => ExpiresAt = DateTime.UtcNow.AddSeconds(value);
+        }
+
+        /// <summary>
         /// Gets a DateTime with when this token expires
         /// </summary>
         public DateTime ExpiresAt { get; private set; }

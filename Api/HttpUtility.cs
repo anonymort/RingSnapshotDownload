@@ -16,6 +16,8 @@ namespace KoenZomers.Ring.Api
     /// </summary>
     internal class HttpUtility
     {
+        private const string RingUserAgent = "android:com.ringapp";
+
         #region Fields
 
         /// <summary>
@@ -72,7 +74,7 @@ namespace KoenZomers.Ring.Api
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Contents of the result returned by the webserver</returns>
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
-        public async Task<string> GetContents(Uri url, string bearerToken = null)
+        public async Task<string> GetContents(Uri url, string bearerToken = null, string hardwareId = null)
         {
             // Construct the request
             var request = new HttpRequestMessage
@@ -86,6 +88,7 @@ namespace KoenZomers.Ring.Api
             {
                 request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {bearerToken}");
             }
+            AddCommonRingHeaders(request, hardwareId);
 
             // Send the request to the webserver
             var response = await _httpClient.SendAsync(request);
@@ -98,6 +101,8 @@ namespace KoenZomers.Ring.Api
                 case HttpStatusCode.NotFound:
                     throw new Exceptions.DeviceUnknownException();
             }
+
+            response.EnsureSuccessStatusCode();
 
             // Return the response from the server
             var responseFromServer = await response.Content.ReadAsStringAsync();
@@ -127,12 +132,12 @@ namespace KoenZomers.Ring.Api
             {
                 foreach (string headerField in headerFields)
                 {
-                    request.Headers.Add(headerField, headerFields[headerField]);
+                    request.Headers.Add(headerField, headerFields[headerField] ?? string.Empty);
                 }
             }
 
             // Always add the User-Agent header
-            request.Headers.UserAgent.TryParseAdd("android:com.ringapp");
+            request.Headers.UserAgent.TryParseAdd(RingUserAgent);
 
             // Set the content for the HTTP request
             request.Content = new FormUrlEncodedContent(formFields);
@@ -170,6 +175,8 @@ namespace KoenZomers.Ring.Api
                     throw new Exceptions.AuthenticationFailedException();
             }
 
+            response.EnsureSuccessStatusCode();
+
             // Make sure the response content is available
             if (responseText == null) return null;
             return responseText;
@@ -181,7 +188,7 @@ namespace KoenZomers.Ring.Api
         /// <param name="url">Url to download the file from</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Stream with the file download</returns>
-        public async Task<Stream> DownloadFile(Uri url, string bearerToken = null)
+        public async Task<Stream> DownloadFile(Uri url, string bearerToken = null, string hardwareId = null)
         {
             // Construct the request
             var request = new HttpRequestMessage
@@ -202,10 +209,25 @@ namespace KoenZomers.Ring.Api
             {
                 request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {bearerToken}");
             }
+            AddCommonRingHeaders(request, hardwareId);
 
             // Receive the response from the webserver
             var response = await _httpClient.SendAsync(request);
-            return await response.Content.ReadAsStreamAsync();
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.TooManyRequests:
+                    throw new Exceptions.ThrottledException();
+
+                case HttpStatusCode.NotFound:
+                    throw new Exceptions.DeviceUnknownException();
+            }
+
+            response.EnsureSuccessStatusCode();
+
+            var stream = new MemoryStream();
+            await response.Content.CopyToAsync(stream);
+            stream.Position = 0;
+            return stream;
         }
 
         /// <summary>
@@ -217,7 +239,7 @@ namespace KoenZomers.Ring.Api
         /// <param name="bodyContent">Content to send along with the request in the body. Leave NULL to not send along any content.</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <exception cref="Exceptions.UnexpectedOutcomeException">Thrown if the actual HTTP response is different from what was expected</exception>
-        public async Task SendRequestWithExpectedStatusOutcome(Uri url, HttpMethod httpMethod, HttpStatusCode? expectedStatusCode, string bodyContent = null, string bearerToken = null)
+        public async Task SendRequestWithExpectedStatusOutcome(Uri url, HttpMethod httpMethod, HttpStatusCode? expectedStatusCode, string bodyContent = null, string bearerToken = null, string hardwareId = null)
         {
             using var request = new HttpRequestMessage(httpMethod, url);
 
@@ -226,9 +248,10 @@ namespace KoenZomers.Ring.Api
             {
                 request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {bearerToken}");
             }
+            AddCommonRingHeaders(request, hardwareId);
 
             // Always add the User-Agent header
-            request.Headers.UserAgent.TryParseAdd("android:com.ringapp");
+            request.Headers.UserAgent.TryParseAdd(RingUserAgent);
 
             if (bodyContent != null)
             {
@@ -254,10 +277,10 @@ namespace KoenZomers.Ring.Api
         /// <param name="bodyContent">Content to send along with the request in the body. Leave NULL to not send along any content.</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Contents of the result returned by the Ring API parsed in the type T provided</returns>
-        public async Task<T> SendRequest<T>(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null)
+        public async Task<T> SendRequest<T>(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null, string hardwareId = null)
         {
             // Make the request and get the body contents of the response
-            var response = await SendRequest(url, httpMethod, bodyContent, bearerToken);
+            var response = await SendRequest(url, httpMethod, bodyContent, bearerToken, hardwareId);
 
             // Try parsing the response to the type provided with this method
             T responseEntity = JsonSerializer.Deserialize<T>(response);
@@ -272,7 +295,7 @@ namespace KoenZomers.Ring.Api
         /// <param name="bodyContent">Content to send along with the request in the body. Leave NULL to not send along any content.</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Contents of the result returned by the Ring API</returns>
-        public async Task<string> SendRequest(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null)
+        public async Task<string> SendRequest(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null, string hardwareId = null)
         {
             using var request = new HttpRequestMessage(httpMethod, url);
 
@@ -281,9 +304,10 @@ namespace KoenZomers.Ring.Api
             {
                 request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {bearerToken}");
             }
+            AddCommonRingHeaders(request, hardwareId);
 
             // Always add the User-Agent header
-            request.Headers.UserAgent.TryParseAdd("android:com.ringapp");
+            request.Headers.UserAgent.TryParseAdd(RingUserAgent);
 
             if (bodyContent != null)
             {
@@ -292,10 +316,30 @@ namespace KoenZomers.Ring.Api
 
             // Send the HTTP request
             var response = await _httpClient.SendAsync(request);
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.TooManyRequests:
+                    throw new Exceptions.ThrottledException();
+
+                case HttpStatusCode.NotFound:
+                    throw new Exceptions.DeviceUnknownException();
+            }
+
+            response.EnsureSuccessStatusCode();
 
             // Get the response body and return it
             var responseBody = await response.Content.ReadAsStringAsync();
             return responseBody;
+        }
+
+        private static void AddCommonRingHeaders(HttpRequestMessage request, string hardwareId)
+        {
+            request.Headers.UserAgent.TryParseAdd(RingUserAgent);
+
+            if (!string.IsNullOrWhiteSpace(hardwareId) && !request.Headers.Contains("hardware_id"))
+            {
+                request.Headers.Add("hardware_id", hardwareId);
+            }
         }
     }
 }
