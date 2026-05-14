@@ -75,6 +75,13 @@ By default this extracts one JPG frame per second from each downloaded MP4. Choo
 
 That example extracts one JPG every 5 seconds.
 
+After frame extraction, the wizard asks whether to create an optional local timelapse MP4. If you say yes, it asks for:
+
+- Frames per second.
+- Output filename.
+- Whether to overwrite an existing timelapse file.
+- Whether to delete the extracted JPG frames after the MP4 is created.
+
 Frame extraction is local-only and uses `ffmpeg`. Install it on macOS with:
 
 ```bash
@@ -95,6 +102,12 @@ Extracted JPG frames are saved under:
 
 ```text
 snapshots/<device-id> - historical recordings/jpg-frames/
+```
+
+Optional timelapse videos are saved under:
+
+```text
+snapshots/<device-id> - historical recordings/timelapse/
 ```
 
 The wizard will:
@@ -255,7 +268,7 @@ https://api.ring.com/clients_api/video_search/history
 
 The tool searches for available historical events, downloads each available MP4 recording through Ring's recording-download flow, and writes a `manifest.json` file with event metadata.
 
-If you pass `--dlall-extract`, the wrapper then uses local `ffmpeg` to extract JPG frames from those MP4 recordings. This means the historical JPG files are generated locally from downloaded recordings; they are not separate historical JPEG files returned directly by Ring.
+If you pass `--dlall-extract`, the wrapper then uses local `ffmpeg` to extract JPG frames from those MP4 recordings. This means the historical JPG files are generated locally from downloaded recordings; they are not separate historical JPEG files returned directly by Ring. After extraction, the wrapper can optionally stitch the JPG frames into a local timelapse MP4.
 
 The normal single-snapshot workflow still downloads the latest server-side Ring snapshot. If a legitimate server-side saved-snapshot archive endpoint is confirmed in the future, it can be added as a separate historical snapshot strategy without changing the local recording-extraction workflow.
 

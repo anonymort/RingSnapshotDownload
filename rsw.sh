@@ -32,6 +32,7 @@ Options:
             After --dlall downloads MP4 recordings, extract local JPG frames with ffmpeg.
   --dlall-extract-interval SECONDS
             Extract one JPG frame every N seconds. Default: 1.
+            After extraction, the wizard can optionally create a timelapse MP4.
   -h, --help
             Show this help.
 EOF
@@ -205,6 +206,81 @@ extract_frames() {
   done
 }
 
+create_timelapse() {
+  local recordings_dir="$1"
+  local frames_dir="$recordings_dir/jpg-frames"
+  local timelapse_dir="$recordings_dir/timelapse"
+  local fps
+  local output_name
+  local output_path
+  local temp_dir
+  local frame
+  local frame_count=0
+
+  ensure_ffmpeg
+
+  if [[ ! -d "$frames_dir" ]] || ! find "$frames_dir" -maxdepth 1 -type f -name '*.jpg' -print -quit | grep -q .; then
+    say "${yellow}No JPG frames found for timelapse:${reset} $frames_dir"
+    return 0
+  fi
+
+  say
+  say "${bold}Step 4: Timelapse video${reset}"
+  if ! confirm "Create a timelapse MP4 from the extracted JPG frames" "n"; then
+    log "Timelapse creation skipped by user."
+    return 0
+  fi
+
+  fps="$(prompt "Timelapse frames per second" "24")"
+  while [[ ! "$fps" =~ ^[0-9]+([.][0-9]+)?$ || "$fps" == "0" || "$fps" == "0.0" ]]; do
+    say "${red}Enter a positive number for frames per second.${reset}"
+    fps="$(prompt "Timelapse frames per second" "24")"
+  done
+
+  output_name="$(prompt "Timelapse output filename" "timelapse.mp4")"
+  while [[ -z "$output_name" || "$output_name" == */* ]]; do
+    say "${red}Enter a filename only, without folders or slashes.${reset}"
+    output_name="$(prompt "Timelapse output filename" "timelapse.mp4")"
+  done
+  if [[ "$output_name" != *.mp4 ]]; then
+    output_name="${output_name}.mp4"
+  fi
+
+  mkdir -p "$timelapse_dir"
+  output_path="$timelapse_dir/$output_name"
+  if [[ -e "$output_path" ]]; then
+    if confirm "Overwrite existing timelapse file" "n"; then
+      rm -f "$output_path"
+    else
+      say "${yellow}Timelapse skipped because output already exists:${reset} $output_path"
+      return 0
+    fi
+  fi
+
+  temp_dir="$(mktemp -d "$recordings_dir/.timelapse-frames.XXXXXX")"
+  while IFS= read -r -d '' frame; do
+    frame_count=$((frame_count + 1))
+    ln -s "$frame" "$temp_dir/frame_$(printf '%08d' "$frame_count").jpg"
+  done < <(find "$frames_dir" -maxdepth 1 -type f -name '*.jpg' -print0 | sort -z)
+
+  say "Stitching $frame_count frame(s) at $fps FPS into:"
+  say "$output_path"
+  log_command "ffmpeg -hide_banner -loglevel error -framerate \"$fps\" -i \"$temp_dir/frame_%08d.jpg\" -c:v libx264 -pix_fmt yuv420p -movflags +faststart \"$output_path\""
+
+  if ffmpeg -hide_banner -loglevel error -framerate "$fps" -i "$temp_dir/frame_%08d.jpg" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$output_path"; then
+    rm -rf "$temp_dir"
+    say "${green}Timelapse saved:${reset} $output_path"
+    if confirm "Delete JPG frames after successful timelapse to save disk space" "n"; then
+      find "$frames_dir" -maxdepth 1 -type f -name '*.jpg' -delete
+      say "${green}Deleted extracted JPG frames:${reset} $frames_dir"
+    fi
+  else
+    rm -rf "$temp_dir"
+    say "${red}Timelapse creation failed.${reset}"
+    return 1
+  fi
+}
+
 ensure_ffmpeg() {
   if command -v ffmpeg >/dev/null 2>&1; then
     log "ffmpeg found at: $(command -v ffmpeg)"
@@ -353,6 +429,7 @@ if [[ "$DLALL" == true ]]; then
   if [[ "$DLALL_EXTRACT" == true ]]; then
     say
     extract_frames "$recordings_dir"
+    create_timelapse "$recordings_dir"
   fi
 
   say
