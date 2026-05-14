@@ -172,7 +172,7 @@ namespace KoenZomers.Ring.Api
                     throw new Exceptions.TwoFactorAuthenticationRequiredException();
 
                 case HttpStatusCode.Unauthorized:
-                    throw new Exceptions.AuthenticationFailedException();
+                    throw new Exceptions.AuthenticationFailedException(GetAuthenticationFailureMessage(responseText));
             }
 
             response.EnsureSuccessStatusCode();
@@ -180,6 +180,40 @@ namespace KoenZomers.Ring.Api
             // Make sure the response content is available
             if (responseText == null) return null;
             return responseText;
+        }
+
+        private static string GetAuthenticationFailureMessage(string responseText)
+        {
+            const string fallback = "Authentication failed. Ring rejected the login request.";
+
+            if (string.IsNullOrWhiteSpace(responseText))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(responseText);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("error_description", out var errorDescription) && errorDescription.ValueKind == JsonValueKind.String)
+                    {
+                        return $"Authentication failed. Ring says: {errorDescription.GetString()}";
+                    }
+
+                    if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                    {
+                        return $"Authentication failed. Ring says: {error.GetString()}";
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Fall through to a short plain-text response.
+            }
+
+            return responseText.Length > 200 ? $"{fallback} Response: {responseText[..200]}..." : $"{fallback} Response: {responseText}";
         }
 
         /// <summary>

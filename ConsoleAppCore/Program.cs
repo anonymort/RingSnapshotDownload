@@ -114,9 +114,10 @@ namespace KoenZomers.Ring.SnapshotDownload
                     Console.WriteLine("Two factor authentication is required, but too many tokens have been requested recently. Wait for a few minutes and try connecting again.");
                     Environment.Exit(1);
                 }
-                catch (Api.Exceptions.AuthenticationFailedException)
+                catch (Api.Exceptions.AuthenticationFailedException e)
                 {
-                    Console.WriteLine("Authentication failed. Check your Ring email and password, then try again.");
+                    Console.WriteLine(e.Message);
+                    Console.WriteLine("Check your Ring email and password, then try again.");
                     Environment.Exit(1);
                 }
                 catch (WebException)

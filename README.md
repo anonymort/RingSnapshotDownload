@@ -43,6 +43,12 @@ On macOS or Linux, run:
 ./rsw.sh
 ```
 
+For extra explanations while it runs, use verbose log mode:
+
+```bash
+./rsw.sh --log
+```
+
 The wizard will:
 
 1. Show an Anonymort ASCII logo.
