@@ -42,6 +42,12 @@ namespace KoenZomers.Ring.SnapshotDownload
             Console.WriteLine($"Ring Snapshot Download Tool v{appVersion.Major}.{appVersion.Minor}.{appVersion.Build}.{appVersion.Revision} by Koen Zomers");
             Console.WriteLine();
 
+            if (args.Contains("-help") || args.Contains("--help") || args.Contains("-h"))
+            {
+                DisplayHelp();
+                Environment.Exit(0);
+            }
+
             // Load the configuration
             Configuration = await Configuration.Load(SettingsFilePath);
 
@@ -177,7 +183,7 @@ namespace KoenZomers.Ring.SnapshotDownload
             {
                 if (Configuration.DownloadAllHistoricalSnapshots)
                 {
-                    await DownloadAllHistoricalSnapshotFootage(session);
+                    await DownloadAllHistoricalRecordings(session);
                     Console.WriteLine("Done");
                     Environment.Exit(0);
                 }
@@ -368,116 +374,46 @@ namespace KoenZomers.Ring.SnapshotDownload
             {
                 if (int.TryParse(args[args.IndexOf("-dlalldays") + 1], out int downloadAllDays) && downloadAllDays > 0)
                 {
-                    Configuration.DownloadAllDays = downloadAllDays;
+                    Configuration.DownloadAllDays = Math.Min(downloadAllDays, 180);
                 }
             }
         }
 
-        private static async Task DownloadAllHistoricalSnapshotFootage(Session session)
+        private static async Task DownloadAllHistoricalRecordings(Session session)
         {
-            var outputPath = Path.Combine(Configuration.OutputPath, $"{Configuration.DeviceId} - historical snapshot footage");
+            var outputPath = Path.Combine(Configuration.OutputPath, $"{Configuration.DeviceId} - historical recordings");
             Directory.CreateDirectory(outputPath);
 
             var manifest = new List<object>();
             var totalDownloaded = 0;
-            var totalRecordingFallbackDownloaded = 0;
-            var forbiddenDays = 0;
-            var failedDays = 0;
             var now = DateTime.Now;
             var start = now.Date.AddDays(-Configuration.DownloadAllDays + 1);
 
-            Console.WriteLine($"Experimental historical snapshot footage download for device {Configuration.DeviceId}");
+            Console.WriteLine($"Historical Ring recording download for device {Configuration.DeviceId}");
             Console.WriteLine($"Requesting {Configuration.DownloadAllDays} day(s), from {start:yyyy-MM-dd} through {now:yyyy-MM-dd}");
             Console.WriteLine($"Saving files to {outputPath}");
+            Console.WriteLine("These are event recordings returned by Ring video history. Use local frame extraction to create JPG snapshots from the MP4 files.");
             Console.WriteLine();
 
             for (var day = start.Date; day <= now.Date; day = day.AddDays(1))
             {
                 var dayStart = day;
                 var dayEnd = day == now.Date ? now : day.AddDays(1).AddMilliseconds(-1);
-
-                Console.Write($"Querying {dayStart:yyyy-MM-dd}... ");
-                PeriodicFootageResponse response;
-                try
-                {
-                    response = await session.GetPeriodicalFootage(Configuration.DeviceId.Value, dayStart, dayEnd);
-                }
-                catch (HttpRequestException e) when (e.StatusCode == HttpStatusCode.Forbidden)
-                {
-                    forbiddenDays++;
-                    Console.WriteLine("Forbidden: Ring did not allow access to historical periodic footage for this day.");
-                    totalRecordingFallbackDownloaded += await DownloadVideoHistoryFallback(session, outputPath, manifest, dayStart, dayEnd);
-                    continue;
-                }
-                catch (Exception e)
-                {
-                    failedDays++;
-                    Console.WriteLine($"Failed: {e.Message}");
-                    continue;
-                }
-
-                var clips = response?.Data?.Where(c => !c.Deleted && !string.IsNullOrWhiteSpace(c.Url)).ToList() ?? new List<PeriodicFootage>();
-                Console.WriteLine($"{clips.Count} clip(s)");
-
-                if (clips.Count == 0)
-                {
-                    totalRecordingFallbackDownloaded += await DownloadVideoHistoryFallback(session, outputPath, manifest, dayStart, dayEnd);
-                }
-
-                foreach (var clip in clips)
-                {
-                    var clipStart = DateTimeOffset.FromUnixTimeMilliseconds(clip.StartMilliseconds).LocalDateTime;
-                    var clipEnd = DateTimeOffset.FromUnixTimeMilliseconds(clip.EndMilliseconds).LocalDateTime;
-                    var fileName = $"{Configuration.DeviceId} - {clipStart:yyyy-MM-dd HH-mm-ss} - {clipEnd:HH-mm-ss} - {SanitizeFileName(clip.Kind ?? "periodical")}.mp4";
-                    var filePath = Path.Combine(outputPath, fileName);
-
-                    Console.Write($"  Downloading {fileName}... ");
-                    try
-                    {
-                        using var stream = await session.DownloadPeriodicalFootage(new Uri(clip.Url));
-                        using var file = File.Create(filePath);
-                        await stream.CopyToAsync(file);
-                        totalDownloaded++;
-                        manifest.Add(new
-                        {
-                            file = fileName,
-                            source = "periodic_footage",
-                            clip.Kind,
-                            start = clipStart,
-                            end = clipEnd,
-                            playbackMilliseconds = clip.PlaybackMilliseconds,
-                            snapshotCount = clip.Snapshots?.Count ?? 0
-                        });
-                        Console.WriteLine("OK");
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine($"Failed: {e.Message}");
-                    }
-                }
+                totalDownloaded += await DownloadVideoHistoryForDay(session, outputPath, manifest, dayStart, dayEnd);
             }
 
             var manifestPath = Path.Combine(outputPath, "manifest.json");
             await File.WriteAllTextAsync(manifestPath, System.Text.Json.JsonSerializer.Serialize(manifest, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
             Console.WriteLine();
-            Console.WriteLine($"Downloaded {totalDownloaded} historical snapshot footage clip(s).");
-            Console.WriteLine($"Downloaded {totalRecordingFallbackDownloaded} historical recording fallback clip(s).");
-            if (forbiddenDays > 0)
-            {
-                Console.WriteLine($"Ring returned Forbidden for {forbiddenDays} day(s). Historical periodic footage may not be available for this account, device, region, subscription, or endpoint.");
-                Console.WriteLine("For those days, this tool attempted the video-history fallback and saved any available event recordings.");
-            }
-            if (failedDays > 0)
-            {
-                Console.WriteLine($"Other errors occurred for {failedDays} day(s).");
-            }
+            Console.WriteLine($"Downloaded {totalDownloaded} historical recording clip(s).");
+            Console.WriteLine("To create JPG snapshots from these MP4 files, rerun the wizard with --dlall-extract.");
             Console.WriteLine($"Manifest saved to {manifestPath}");
         }
 
-        private static async Task<int> DownloadVideoHistoryFallback(Session session, string outputPath, List<object> manifest, DateTime dayStart, DateTime dayEnd)
+        private static async Task<int> DownloadVideoHistoryForDay(Session session, string outputPath, List<object> manifest, DateTime dayStart, DateTime dayEnd)
         {
-            Console.Write($"  Fallback video history {dayStart:yyyy-MM-dd}... ");
+            Console.Write($"Querying video history {dayStart:yyyy-MM-dd}... ");
             VideoSearchResponse response;
             try
             {
@@ -515,7 +451,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                     manifest.Add(new
                     {
                         file = fileName,
-                        source = "video_history_fallback",
+                        source = "video_history",
                         dingId = historicalEvent.DingId,
                         historicalEvent.Kind,
                         createdAt,
@@ -559,8 +495,9 @@ namespace KoenZomers.Ring.SnapshotDownload
             Console.WriteLine("forceupdate: Requests the Ring device to capture a new snapshot before downloading. If not provided, the latest cached snapshot will be taken.");
             Console.WriteLine("validateimage: Run a check to try to validate if the downloaded image file is valid. Will retry with the maxretries value if its not valid.");
             Console.WriteLine("maxretries: Amount of times to retry downloading the snapshot when Ring returns an error. 3 is default.");
-            Console.WriteLine("dlall: Experimental. Downloads historical periodic snapshot footage clips, where available.");
-            Console.WriteLine("dlalldays: Number of days to query with -dlall. 14 is default.");
+            Console.WriteLine("dlall: Experimental. Downloads historical Ring event recordings for local frame extraction.");
+            Console.WriteLine("dlalldays: Number of days to query with -dlall. 14 is default, 180 is maximum.");
+            Console.WriteLine("help: Shows this help text without contacting Ring.");
             Console.WriteLine();
             Console.WriteLine("Example:");
             Console.WriteLine("   RingSnapshotDownload -username my@email.com -password mypassword -deviceid 12345 -forceupdate -out d:\\screenshots");

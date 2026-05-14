@@ -68,13 +68,13 @@ namespace KoenZomers.Ring.SnapshotDownload
         public short MaximumRetries { get; set; } = 3;
 
         /// <summary>
-        /// Try to download historical periodic snapshot footage for the selected device.
+        /// Try to download historical recordings for the selected device.
         /// </summary>
         [JsonIgnore]
         public bool DownloadAllHistoricalSnapshots { get; set; } = false;
 
         /// <summary>
-        /// Number of days of historical periodic footage to request.
+        /// Number of days of historical recordings to request.
         /// </summary>
         [JsonIgnore]
         public int DownloadAllDays { get; set; } = 14;

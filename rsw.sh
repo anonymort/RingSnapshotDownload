@@ -7,6 +7,7 @@ SOLUTION="$ROOT_DIR/KoenZomers.Ring.SnapshotDownload.sln"
 VERBOSE=false
 DLALL=false
 DLALL_DAYS=14
+DLALL_DAYS_SET=false
 DLALL_EXTRACT=false
 DLALL_EXTRACT_INTERVAL=1
 
@@ -24,11 +25,11 @@ Usage: ./rsw.sh [--log] [--dlall] [--dlall-days DAYS] [--dlall-extract] [--dlall
 
 Options:
   --log     Print extra explanations before and after each major command.
-  --dlall   Experimental: download all historical periodic snapshot footage clips Ring returns.
+  --dlall   Experimental: download historical Ring recordings for local frame extraction.
   --dlall-days DAYS
-            Number of days to query with --dlall. Default: 14.
+            Number of days to query with --dlall. Default: prompt, suggested 14. Maximum: 180.
   --dlall-extract
-            After --dlall downloads MP4 clips, extract local JPG frames with ffmpeg.
+            After --dlall downloads MP4 recordings, extract local JPG frames with ffmpeg.
   --dlall-extract-interval SECONDS
             Extract one JPG frame every N seconds. Default: 1.
   -h, --help
@@ -61,12 +62,13 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --dlall-days)
-      if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
-        printf 'Expected a positive number after --dlall-days.\n'
+      if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ || "$2" -lt 1 || "$2" -gt 180 ]]; then
+        printf 'Expected a number from 1 to 180 after --dlall-days.\n'
         usage
         exit 1
       fi
       DLALL_DAYS="$2"
+      DLALL_DAYS_SET=true
       shift 2
       ;;
     -h|--help)
@@ -169,8 +171,8 @@ run_ring() {
 }
 
 extract_frames() {
-  local footage_dir="$1"
-  local frames_dir="$footage_dir/jpg-frames"
+  local recordings_dir="$1"
+  local frames_dir="$recordings_dir/jpg-frames"
   local clips=()
   local clip
   local clip_name
@@ -180,10 +182,10 @@ extract_frames() {
 
   while IFS= read -r -d '' clip; do
     clips+=("$clip")
-  done < <(find "$footage_dir" -maxdepth 1 -type f -name '*.mp4' -print0 | sort -z)
+  done < <(find "$recordings_dir" -maxdepth 1 -type f -name '*.mp4' -print0 | sort -z)
 
   if [[ "${#clips[@]}" -eq 0 ]]; then
-    say "${yellow}No MP4 files found to extract from:${reset} $footage_dir"
+    say "${yellow}No MP4 files found to extract from:${reset} $recordings_dir"
     return 0
   fi
 
@@ -246,9 +248,17 @@ describe_ring_output() {
 banner
 say "${bold}Welcome.${reset} This wizard will list your Ring devices and download one snapshot."
 if [[ "$DLALL" == true ]]; then
-  say "${yellow}Experimental --dlall mode is on.${reset} I will try to download historical periodic snapshot footage."
+  say "${yellow}Experimental --dlall mode is on.${reset} I will download historical Ring recordings that Ring returns for this account."
   if [[ "$DLALL_EXTRACT" == true ]]; then
     say "${yellow}Local frame extraction is on.${reset} I will use ffmpeg to turn downloaded MP4s into JPG frames."
+  fi
+  if [[ "$DLALL_DAYS_SET" == false ]]; then
+    requested_days="$(prompt "How many days back to query (1-180)" "$DLALL_DAYS")"
+    while [[ ! "$requested_days" =~ ^[0-9]+$ || "$requested_days" -lt 1 || "$requested_days" -gt 180 ]]; do
+      say "${red}Enter a number from 1 to 180.${reset}"
+      requested_days="$(prompt "How many days back to query (1-180)" "$DLALL_DAYS")"
+    done
+    DLALL_DAYS="$requested_days"
   fi
 fi
 say "${yellow}Your password is hidden while typing. Do not share Settings.json or refresh tokens.${reset}"
@@ -324,25 +334,25 @@ args=(-username "$email" -password "$password" -deviceid "$device_id" -out "$out
 
 if [[ "$DLALL" == true ]]; then
   args+=(-dlall -dlalldays "$DLALL_DAYS")
-  footage_dir="$output_dir/$device_id - historical snapshot footage"
+  recordings_dir="$output_dir/$device_id - historical recordings"
 
   say
-  say "${bold}Step 2: Downloading historical snapshot footage${reset}"
-  say "${yellow}This uses Ring's periodical footage endpoint. Returned files are MP4 clips made from periodic snapshots, not individual JPEG files.${reset}"
+  say "${bold}Step 2: Downloading historical recordings${reset}"
+  say "${yellow}This uses Ring video history. Returned files are MP4 recordings; JPG snapshots are created locally with --dlall-extract.${reset}"
   say
-  log "The app will query $DLALL_DAYS day(s) and save returned footage clips plus a manifest."
+  log "The app will query $DLALL_DAYS day(s), save returned MP4 recordings, and write a manifest."
   log_command "$DOTNET run --project \"$PROJECT\" --configuration Release -- -username \"$email\" -password \"********\" -deviceid \"$device_id\" -out \"$output_dir\" -dlall -dlalldays \"$DLALL_DAYS\""
   describe_ring_output
   if ! run_ring "${args[@]}"; then
     say
-    say "${red}Historical snapshot footage download failed.${reset}"
-    say "Ring may not have periodical footage available for this device/date range."
+    say "${red}Historical recording download failed.${reset}"
+    say "Ring may not have video history available for this device/date range, account, or subscription."
     exit 1
   fi
 
   if [[ "$DLALL_EXTRACT" == true ]]; then
     say
-    extract_frames "$footage_dir"
+    extract_frames "$recordings_dir"
   fi
 
   say

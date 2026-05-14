@@ -1,9 +1,0 @@
-{
-  "OutputPath": null,
-  "RingUsername": null,
-  "RingPassword": null,
-  "RingRefreshToken": null,
-  "RingDeviceId": null,
-  "ForceUpdateSnapshot": true,
-  "MaximumRetries": 3
-}

@@ -49,19 +49,19 @@ For extra explanations while it runs, use verbose log mode:
 ./rsw.sh --log
 ```
 
-To try downloading historical snapshot capture footage, use experimental `--dlall` mode:
+To download historical Ring recordings for local snapshot extraction, use experimental `--dlall` mode:
 
 ```bash
 ./rsw.sh --log --dlall
 ```
 
-`--dlall` asks Ring for historical periodic footage clips for the selected device. Ring returns MP4 clips created from periodic snapshots when they are available, not individual JPEG snapshots. By default it checks the last 14 days:
+`--dlall` asks Ring video history for MP4 event recordings for the selected device. It does not try to force direct access to unavailable historical snapshot archives. By default, the wizard asks how many days to query, and the command-line default is 14 days:
 
 ```bash
 ./rsw.sh --log --dlall --dlall-days 7
 ```
 
-To turn those downloaded MP4 clips into local JPG snapshots, add `--dlall-extract`:
+To turn those downloaded MP4 recordings into local JPG snapshots, add `--dlall-extract`:
 
 ```bash
 ./rsw.sh --log --dlall --dlall-extract
@@ -83,18 +83,18 @@ brew install ffmpeg
 
 If you run `--dlall-extract` and `ffmpeg` is missing, the wizard will ask whether to install it with Homebrew. If Homebrew is not installed, it will print manual install instructions.
 
-Historical downloads are saved under:
+Historical recordings are saved under:
 
 ```text
-snapshots/<device-id> - historical snapshot footage/
+snapshots/<device-id> - historical recordings/
 ```
 
-If Ring returns `403 Forbidden` or no periodic footage for a day, the tool falls back to Ring video history for that day and downloads available event recordings. Those fallback files are still useful for local frame extraction, but they are event recordings rather than pure periodic snapshot footage.
+These files are recordings that Ring returns for the account, device, subscription, and date range. Ring retention varies by plan, region, and device settings. The tool lets you request up to 180 days, but Ring may return less.
 
 Extracted JPG frames are saved under:
 
 ```text
-snapshots/<device-id> - historical snapshot footage/jpg-frames/
+snapshots/<device-id> - historical recordings/jpg-frames/
 ```
 
 The wizard will:
@@ -125,11 +125,11 @@ There are no automated unit tests in this repository yet. Use these checks befor
 ```bash
 dotnet build KoenZomers.Ring.SnapshotDownload.sln --configuration Release
 dotnet list KoenZomers.Ring.SnapshotDownload.sln package --vulnerable --include-transitive
-dotnet run --project ConsoleAppCore/ConsoleAppCore.csproj --configuration Release --
+dotnet run --project ConsoleAppCore/ConsoleAppCore.csproj --configuration Release -- -help
 ./test-scripts.sh
 ```
 
-The last command should print the help text and exit because no username or device ID was provided.
+The `-help` command should print the app help text and exit without contacting Ring.
 
 ## Build A macOS App
 
@@ -242,22 +242,22 @@ Keep this file private. Anyone with the refresh token may be able to access your
 | `-forceupdate` | Ask Ring for a fresh snapshot instead of using the cached one. |
 | `-validateimage` | Check that the downloaded file is a real image. |
 | `-maxretries` | Number of retry attempts when Ring is slow or returns an error. Default is `3`. |
-| `-dlall` | Experimental. Download historical periodic snapshot footage clips, where Ring returns them. |
-| `-dlalldays` | Number of days to query with `-dlall`. Default is `14`. |
+| `-dlall` | Experimental. Download historical Ring event recordings for local frame extraction. |
+| `-dlalldays` | Number of days to query with `-dlall`. Default is `14`, maximum is `180`. |
 
 ## Historical Snapshot Strategy
 
-Ring's current mobile-style endpoints do not clearly expose every historical snapshot as an individual JPEG. The available historical path this tool uses is Ring's periodic footage endpoint:
+Ring's current mobile-style endpoints do not clearly expose every historical snapshot as an individual JPEG that this tool can reliably download. The practical historical path this tool uses now is Ring video history:
 
 ```text
-https://api.ring.com/recordings/public/footages/{device-id}
+https://api.ring.com/clients_api/video_search/history
 ```
 
-That endpoint can return MP4 clips built from periodic snapshot capture. The tool saves those clips and writes a `manifest.json` file with clip metadata.
+The tool searches for available historical events, downloads each available MP4 recording through Ring's recording-download flow, and writes a `manifest.json` file with event metadata.
 
-If the periodic footage endpoint is forbidden or empty, the tool then tries Ring's video-history endpoint for the same day and downloads available event recordings through Ring's recording-download flow. This does not force access to unavailable footage, but it gives the local extraction step the best available MP4 source that Ring returns for the account.
+If you pass `--dlall-extract`, the wrapper then uses local `ffmpeg` to extract JPG frames from those MP4 recordings. This means the historical JPG files are generated locally from downloaded recordings; they are not separate historical JPEG files returned directly by Ring.
 
-If you pass `--dlall-extract`, the wrapper then uses local `ffmpeg` to extract JPG frames from those MP4 clips. This means the JPG files are generated locally from downloaded footage; they are not separate JPEG files returned directly by Ring.
+The normal single-snapshot workflow still downloads the latest server-side Ring snapshot. If a legitimate server-side saved-snapshot archive endpoint is confirmed in the future, it can be added as a separate historical snapshot strategy without changing the local recording-extraction workflow.
 
 ## Current Status
 
