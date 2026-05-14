@@ -55,7 +55,7 @@ namespace KoenZomers.Ring.SnapshotDownload
         /// <summary>
         /// Boolean indicating if a fresh snapshot should be requested from the Ring device before downloading it. If set to false, the latest cached snapshot will be used which is faster.
         /// </summary>
-        public bool ForceUpdateSnapshot { get; set; } = true;
+        public bool ForceUpdateSnapshot { get; set; } = false;
 
         /// <summary>
         /// Boolean indicating if the downloaded image should be validated if it's a valid image
@@ -95,7 +95,12 @@ namespace KoenZomers.Ring.SnapshotDownload
                 try
                 {
                     var settingsFileContents = await File.ReadAllTextAsync(path);
-                    configuration = JsonSerializer.Deserialize<Configuration>(settingsFileContents);
+                    var deserializedConfiguration = JsonSerializer.Deserialize<Configuration>(settingsFileContents);
+
+                    if (deserializedConfiguration != null)
+                    {
+                        configuration = deserializedConfiguration;
+                    }
                 }
                 catch (IOException)
                 {
@@ -103,7 +108,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                 }
                 catch (JsonException)
                 {
-                    Console.WriteLine("Contens of the settings file are invalid, skipping");
+                    Console.WriteLine("Contents of the settings file are invalid, skipping");
                 }
             }
             

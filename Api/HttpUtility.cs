@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 using System.Collections.Specialized;
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -14,7 +15,7 @@ namespace KoenZomers.Ring.Api
     /// <summary>
     /// Internal utility class for Http communication with the Ring API
     /// </summary>
-    internal class HttpUtility
+    internal class HttpUtility : IHttpUtility
     {
         private const string RingUserAgent = "android:com.ringapp";
 
@@ -74,10 +75,10 @@ namespace KoenZomers.Ring.Api
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Contents of the result returned by the webserver</returns>
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
-        public async Task<string> GetContents(Uri url, string bearerToken = null, string hardwareId = null)
+        public async Task<string> GetContents(Uri url, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default)
         {
             // Construct the request
-            var request = new HttpRequestMessage
+            using var request = new HttpRequestMessage
             {
                 Method = HttpMethod.Get,
                 RequestUri = url
@@ -91,7 +92,7 @@ namespace KoenZomers.Ring.Api
             AddCommonRingHeaders(request, hardwareId);
 
             // Send the request to the webserver
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             switch (response.StatusCode)
             {
@@ -100,12 +101,15 @@ namespace KoenZomers.Ring.Api
 
                 case HttpStatusCode.NotFound:
                     throw new Exceptions.DeviceUnknownException();
+
+                case HttpStatusCode.ServiceUnavailable:
+                    throw new Exceptions.ThrottledException();
             }
 
             response.EnsureSuccessStatusCode();
 
             // Return the response from the server
-            var responseFromServer = await response.Content.ReadAsStringAsync();
+            var responseFromServer = await response.Content.ReadAsStringAsync(cancellationToken);
             return responseFromServer;
         }
 
@@ -119,10 +123,10 @@ namespace KoenZomers.Ring.Api
         /// <exception cref="Exceptions.ThrottledException">Thrown when the web server indicates too many requests have been made (HTTP 429).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationIncorrectException">Thrown when the web server indicates the two-factor code was incorrect (HTTP 400).</exception>
         /// <exception cref="Exceptions.TwoFactorAuthenticationRequiredException">Thrown when the web server indicates two-factor authentication is required (HTTP 412).</exception>
-        public async Task<string> PostJson(Uri url, Dictionary<string, string> formFields, NameValueCollection headerFields)
+        public async Task<string> PostJson(Uri url, Dictionary<string, string> formFields, NameValueCollection headerFields, CancellationToken cancellationToken = default)
         {
             // Construct the POST request which performs the login
-            var request = new HttpRequestMessage
+            using var request = new HttpRequestMessage
             {
                 Method = HttpMethod.Post,
                 RequestUri = url
@@ -143,13 +147,13 @@ namespace KoenZomers.Ring.Api
             request.Content = new StringContent(JsonSerializer.Serialize(formFields), Encoding.UTF8, "application/json");
 
             // Receive the response from the webserver
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
 
             // Make sure the webserver has sent a response
             if (response == null) return null;
 
             // Get the response body
-            var responseText = await response.Content.ReadAsStringAsync();
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
 
             switch (response.StatusCode)
             {
@@ -173,6 +177,11 @@ namespace KoenZomers.Ring.Api
 
                 case HttpStatusCode.Unauthorized:
                     throw new Exceptions.AuthenticationFailedException(GetAuthenticationFailureMessage(responseText));
+            }
+
+            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+            {
+                throw new Exceptions.ThrottledException();
             }
 
             response.EnsureSuccessStatusCode();
@@ -222,10 +231,10 @@ namespace KoenZomers.Ring.Api
         /// <param name="url">Url to download the file from</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Stream with the file download</returns>
-        public async Task<Stream> DownloadFile(Uri url, string bearerToken = null, string hardwareId = null)
+        public async Task<Stream> DownloadFile(Uri url, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default)
         {
             // Construct the request
-            var request = new HttpRequestMessage
+            using var request = new HttpRequestMessage
             {
                 Method = HttpMethod.Get,
                 RequestUri = url,
@@ -246,7 +255,7 @@ namespace KoenZomers.Ring.Api
             AddCommonRingHeaders(request, hardwareId);
 
             // Receive the response from the webserver
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             switch (response.StatusCode)
             {
                 case HttpStatusCode.TooManyRequests:
@@ -254,14 +263,77 @@ namespace KoenZomers.Ring.Api
 
                 case HttpStatusCode.NotFound:
                     throw new Exceptions.DeviceUnknownException();
+
+                case HttpStatusCode.ServiceUnavailable:
+                    throw new Exceptions.ThrottledException();
             }
 
             response.EnsureSuccessStatusCode();
 
             var stream = new MemoryStream();
-            await response.Content.CopyToAsync(stream);
+            await using (var downloadStream = await response.Content.ReadAsStreamAsync(cancellationToken))
+            {
+                await downloadStream.CopyToAsync(stream, cancellationToken);
+            }
             stream.Position = 0;
             return stream;
+        }
+
+        /// <summary>
+        /// Downloads the file from the provided Url directly to the provided path
+        /// </summary>
+        /// <param name="url">Url to download the file from</param>
+        /// <param name="saveAs">Full path including filename where the file should be saved</param>
+        /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
+        /// <param name="hardwareId">Hardware id to send to Ring as an additional request header</param>
+        public async Task DownloadFileToPath(Uri url, string saveAs, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default)
+        {
+            var outputDirectory = Path.GetDirectoryName(saveAs);
+            if (!string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
+            // Construct the request
+            using var request = new HttpRequestMessage
+            {
+                Method = HttpMethod.Get,
+                RequestUri = url,
+                Headers =
+                {
+                    { HttpRequestHeader.Accept.ToString(), "*/*" },
+                    //{ HttpRequestHeader.Range.ToString(), "bytes 0" }
+                }
+            };
+
+            request.Headers.Range = new RangeHeaderValue(0, null);
+
+            // Check if the OAuth Bearer Authorization token should be added to the request
+            if (!string.IsNullOrEmpty(bearerToken))
+            {
+                request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {bearerToken}");
+            }
+            AddCommonRingHeaders(request, hardwareId);
+
+            // Receive the response from the webserver
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.TooManyRequests:
+                    throw new Exceptions.ThrottledException();
+
+                case HttpStatusCode.NotFound:
+                    throw new Exceptions.DeviceUnknownException();
+
+                case HttpStatusCode.ServiceUnavailable:
+                    throw new Exceptions.ThrottledException();
+            }
+
+            response.EnsureSuccessStatusCode();
+
+            await using var downloadStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var fileStream = new FileStream(saveAs, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            await downloadStream.CopyToAsync(fileStream, cancellationToken);
         }
 
         /// <summary>
@@ -273,7 +345,7 @@ namespace KoenZomers.Ring.Api
         /// <param name="bodyContent">Content to send along with the request in the body. Leave NULL to not send along any content.</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <exception cref="Exceptions.UnexpectedOutcomeException">Thrown if the actual HTTP response is different from what was expected</exception>
-        public async Task SendRequestWithExpectedStatusOutcome(Uri url, HttpMethod httpMethod, HttpStatusCode? expectedStatusCode, string bodyContent = null, string bearerToken = null, string hardwareId = null)
+        public async Task SendRequestWithExpectedStatusOutcome(Uri url, HttpMethod httpMethod, HttpStatusCode? expectedStatusCode, string bodyContent = null, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default)
         {
             using var request = new HttpRequestMessage(httpMethod, url);
 
@@ -293,7 +365,18 @@ namespace KoenZomers.Ring.Api
             }
 
             // Send the HTTP request
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.TooManyRequests:
+                    throw new Exceptions.ThrottledException();
+
+                case HttpStatusCode.NotFound:
+                    throw new Exceptions.DeviceUnknownException();
+
+                case HttpStatusCode.ServiceUnavailable:
+                    throw new Exceptions.ThrottledException();
+            }
 
             // Validate the resulting HTTP status against the expected status
             if (expectedStatusCode.HasValue && response.StatusCode != expectedStatusCode.Value)
@@ -311,10 +394,10 @@ namespace KoenZomers.Ring.Api
         /// <param name="bodyContent">Content to send along with the request in the body. Leave NULL to not send along any content.</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Contents of the result returned by the Ring API parsed in the type T provided</returns>
-        public async Task<T> SendRequest<T>(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null, string hardwareId = null)
+        public async Task<T> SendRequest<T>(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default)
         {
             // Make the request and get the body contents of the response
-            var response = await SendRequest(url, httpMethod, bodyContent, bearerToken, hardwareId);
+            var response = await SendRequest(url, httpMethod, bodyContent, bearerToken, hardwareId, cancellationToken);
 
             // Try parsing the response to the type provided with this method
             T responseEntity = JsonSerializer.Deserialize<T>(response);
@@ -329,7 +412,7 @@ namespace KoenZomers.Ring.Api
         /// <param name="bodyContent">Content to send along with the request in the body. Leave NULL to not send along any content.</param>
         /// <param name="bearerToken">Bearer token to authenticate the request with. Leave out to not authenticate the session.</param>
         /// <returns>Contents of the result returned by the Ring API</returns>
-        public async Task<string> SendRequest(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null, string hardwareId = null)
+        public async Task<string> SendRequest(Uri url, HttpMethod httpMethod, string bodyContent, string bearerToken = null, string hardwareId = null, CancellationToken cancellationToken = default)
         {
             using var request = new HttpRequestMessage(httpMethod, url);
 
@@ -349,7 +432,7 @@ namespace KoenZomers.Ring.Api
             }
 
             // Send the HTTP request
-            var response = await _httpClient.SendAsync(request);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             switch (response.StatusCode)
             {
                 case HttpStatusCode.TooManyRequests:
@@ -357,12 +440,15 @@ namespace KoenZomers.Ring.Api
 
                 case HttpStatusCode.NotFound:
                     throw new Exceptions.DeviceUnknownException();
+
+                case HttpStatusCode.ServiceUnavailable:
+                    throw new Exceptions.ThrottledException();
             }
 
             response.EnsureSuccessStatusCode();
 
             // Get the response body and return it
-            var responseBody = await response.Content.ReadAsStringAsync();
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             return responseBody;
         }
 

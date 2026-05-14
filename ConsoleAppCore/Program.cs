@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.IO;
 using System.Threading.Tasks;
-using System.Threading;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -13,6 +12,7 @@ using SixLabors.ImageSharp;
 using System.Configuration;
 using KoenZomers.Ring.Api.Exceptions;
 using KoenZomers.Ring.Api.Entities;
+using System.Threading;
 
 namespace KoenZomers.Ring.SnapshotDownload
 {
@@ -22,6 +22,8 @@ namespace KoenZomers.Ring.SnapshotDownload
         /// The hardware id of the device running this application.
         /// </summary>
         public const string HardwareId = nameof(HardwareId);
+
+        private static readonly Random RetryJitter = new Random();
 
         /// <summary>
         /// Gets the location of the settings file
@@ -35,6 +37,14 @@ namespace KoenZomers.Ring.SnapshotDownload
 
         static async Task Main(string[] args)
         {
+            using var cancellationSource = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                cancellationSource.Cancel();
+            };
+            var cancellationToken = cancellationSource.Token;
+
             Console.WriteLine();
 
             var appVersion = Assembly.GetExecutingAssembly().GetName().Version;
@@ -52,7 +62,16 @@ namespace KoenZomers.Ring.SnapshotDownload
             Configuration = await Configuration.Load(SettingsFilePath);
 
             // Parse the provided arguments
-            ParseArguments(args);
+            try
+            {
+                ParseArguments(args);
+            }
+            catch (FormatException ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                DisplayHelp();
+                Environment.Exit(1);
+            }
 
             // Ensure we have the required configuration
             if (string.IsNullOrWhiteSpace(Configuration.Username) && string.IsNullOrWhiteSpace(Configuration.RefreshToken))
@@ -86,7 +105,7 @@ namespace KoenZomers.Ring.SnapshotDownload
 
                 try
                 {
-                    session = await Session.GetSessionByRefreshToken(Configuration.RefreshToken, GetHardwareIdOrDefault());
+                session = await Session.GetSessionByRefreshToken(Configuration.RefreshToken, GetHardwareIdOrDefault(), cancellationToken: cancellationToken);
                 }
                 catch (Api.Exceptions.AuthenticationFailedException)
                 {
@@ -105,7 +124,7 @@ namespace KoenZomers.Ring.SnapshotDownload
 
                 try
                 {
-                    await session.Authenticate();
+                    await session.Authenticate(cancellationToken: cancellationToken);
                 }
                 catch (Api.Exceptions.TwoFactorAuthenticationRequiredException)
                 {
@@ -114,7 +133,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                     var token = Console.ReadLine();
 
                     // Authenticate again using the two factor token
-                    await session.Authenticate(twoFactorAuthCode: token);
+                    await session.Authenticate(twoFactorAuthCode: token, cancellationToken: cancellationToken);
                 }
                 catch(Api.Exceptions.ThrottledException)
                 {
@@ -146,7 +165,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                 // Retrieve all available Ring devices and list them
                 Console.Write("Retrieving all devices... ");
                 
-                var devices = await session.GetRingDevices();
+                var devices = await session.GetRingDevices(cancellationToken);
 
                 Console.WriteLine($"{devices.Doorbots.Count + devices.AuthorizedDoorbots.Count + devices.StickupCams.Count} found");
                 Console.WriteLine();
@@ -183,10 +202,12 @@ namespace KoenZomers.Ring.SnapshotDownload
             {
                 if (Configuration.DownloadAllHistoricalSnapshots)
                 {
-                    await DownloadAllHistoricalRecordings(session);
+                    await DownloadAllHistoricalRecordings(session, cancellationToken);
                     Console.WriteLine("Done");
                     Environment.Exit(0);
                 }
+
+                Directory.CreateDirectory(Configuration.OutputPath);
 
                 // By default the screenshot will be tagged with the current date/time unless we can retrieve information from Ring when the latest snapshot was really taken
                 var timeStamp = DateTime.Now;
@@ -194,7 +215,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                 // Retrieve when the latest available snapshot was taken
                 try
                 {
-                    var doorbotTimeStamps = await session.GetDoorbotSnapshotTimestamp(Configuration.DeviceId.Value);
+                    var doorbotTimeStamps = await session.GetDoorbotSnapshotTimestamp(Configuration.DeviceId.Value, cancellationToken);
 
                     // Validate if we received timestamps
                     if(doorbotTimeStamps.Timestamp.Count > 0)
@@ -209,6 +230,10 @@ namespace KoenZomers.Ring.SnapshotDownload
                             timeStamp = latestDoorbotTimeStamp.Timestamp.Value;
                         }
                     }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception e) when (e is DeviceUnknownException || e is HttpRequestException)
                 {
@@ -230,29 +255,34 @@ namespace KoenZomers.Ring.SnapshotDownload
                     downloadSucceeded = false;
                     imageValidationSucceeded = true;
                     savingSucceeded = false;
-
-                    Stream imageStream = null;
                     try
                     {
                         Console.Write($"Downloading snapshot from Ring device with ID {Configuration.DeviceId}... ");
 
-                        imageStream = await session.GetLatestSnapshot(Configuration.DeviceId.Value, Configuration.ForceUpdateSnapshot);
+                        await session.DownloadLatestSnapshot(Configuration.DeviceId.Value, downloadFullPath, Configuration.ForceUpdateSnapshot, cancellationToken: cancellationToken);
                         downloadSucceeded = true;
                         
                         Console.WriteLine("OK");
                     }
-                    catch (Exception e)
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
-                        if ((e is WebException webEx && webEx.Message.Contains("404")) || e is DeviceUnknownException)
-                        {
-                            // Ring tends to throw a 404 if it has no snapshot available and couldn't retrieve one in time, retry it
-                            Console.WriteLine($"Failed: not found returned by Ring API, retrying ({attempt}/{Configuration.MaximumRetries})");
-                        }
-                        else
+                        throw;
+                    }
+                    catch (Exception e) when (IsRetryableSnapshotError(e))
+                    {
+                        if (attempt < Configuration.MaximumRetries)
                         {
                             Console.WriteLine($"Failed: {e.Message}, retrying ({attempt}/{Configuration.MaximumRetries})");
+                            await Task.Delay(GetSnapshotRetryDelay(attempt), cancellationToken);
+                            continue;
                         }
-                        Thread.Sleep(TimeSpan.FromSeconds(1));
+
+                        Console.WriteLine($"Failed: {e.Message}, reached retry limit ({attempt}/{Configuration.MaximumRetries})");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine($"Failed: {e.Message}, no retry configured.");
+                        break;
                     }
 
                     // Check if the image should be validated to not be corrupt
@@ -261,23 +291,26 @@ namespace KoenZomers.Ring.SnapshotDownload
                         Console.Write("Validating image... ");
                         try
                         {
-                            await Image.DetectFormatAsync(imageStream);
-                            if (imageStream.CanSeek)
-                            {
-                                imageStream.Position = 0;
-                            }
+                            await using var downloadedImage = File.OpenRead(downloadFullPath);
+                            await Image.DetectFormatAsync(downloadedImage);
 
                             Console.WriteLine("OK");
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
                         }
                         catch(InvalidImageContentException)
                         {
                             Console.WriteLine($"Failed: image content corrupt, retrying ({attempt}/{Configuration.MaximumRetries})");
                             imageValidationSucceeded = false;
+                            TryDeletePartialFile(downloadFullPath);
                         }
                         catch(UnknownImageFormatException)
                         {
                             Console.WriteLine($"Failed: image content not recognized, retrying ({attempt}/{Configuration.MaximumRetries})");
                             imageValidationSucceeded = false;
+                            TryDeletePartialFile(downloadFullPath);
                         }
                     }
 
@@ -286,8 +319,6 @@ namespace KoenZomers.Ring.SnapshotDownload
                         Console.Write($"Saving image to {downloadFullPath}... ");
                         try
                         {
-                            using Stream file = File.Create(downloadFullPath);
-                            await imageStream.CopyToAsync(file);
                             savingSucceeded = true;
                             Console.WriteLine("OK");
                         }
@@ -295,10 +326,16 @@ namespace KoenZomers.Ring.SnapshotDownload
                         {
                             Console.WriteLine($"Failed: {e.Message}, retrying ({attempt}/{Configuration.MaximumRetries})");
                             savingSucceeded = false;
+                            TryDeletePartialFile(downloadFullPath);
                         }
                     }
 
                 } while ((!downloadSucceeded || !imageValidationSucceeded || !savingSucceeded) && attempt < Configuration.MaximumRetries);
+
+                if (!savingSucceeded)
+                {
+                    Environment.Exit(1);
+                }
             }
             
             Console.WriteLine("Done");
@@ -312,74 +349,100 @@ namespace KoenZomers.Ring.SnapshotDownload
         /// <param name="args">String array with arguments passed to this console application</param>
         private static void ParseArguments(IList<string> args)
         {
-            if (args.Contains("-out"))
+            for (var argIndex = 0; argIndex < args.Count; argIndex++)
             {
-                Configuration.OutputPath = args[args.IndexOf("-out") + 1];
-            }
-            else
-            {
-                if (string.IsNullOrEmpty(Configuration.OutputPath))
+                switch (args[argIndex].ToLowerInvariant())
                 {
-                    Configuration.OutputPath = Environment.CurrentDirectory;
+                    case "-out":
+                        Configuration.OutputPath = ConsumeOptionValue(args, ref argIndex, "-out");
+                        break;
+                    case "-username":
+                        Configuration.Username = ConsumeOptionValue(args, ref argIndex, "-username");
+                        break;
+                    case "-password":
+                        Configuration.Password = ConsumeOptionValue(args, ref argIndex, "-password");
+                        break;
+                    case "-deviceid":
+                        var deviceIdValue = ConsumeOptionValue(args, ref argIndex, "-deviceid");
+                        if (!int.TryParse(deviceIdValue, out int deviceId))
+                        {
+                            throw new FormatException($"Could not parse -deviceid value '{deviceIdValue}' as a numeric ID.");
+                        }
+                        Configuration.DeviceId = deviceId;
+                        break;
+                    case "-maxretries":
+                        var maxRetriesValue = ConsumeOptionValue(args, ref argIndex, "-maxretries");
+                        if (!short.TryParse(maxRetriesValue, out short maxRetries))
+                        {
+                            throw new FormatException($"Could not parse -maxretries value '{maxRetriesValue}' as a number.");
+                        }
+                        if (maxRetries < 1)
+                        {
+                            throw new FormatException("-maxretries must be at least 1.");
+                        }
+                        Configuration.MaximumRetries = maxRetries;
+                        break;
+                    case "-dlalldays":
+                        var dlAllDaysValue = ConsumeOptionValue(args, ref argIndex, "-dlalldays");
+                        if (!int.TryParse(dlAllDaysValue, out int downloadAllDays))
+                        {
+                            throw new FormatException($"Could not parse -dlalldays value '{dlAllDaysValue}' as a number.");
+                        }
+                        if (downloadAllDays < 1)
+                        {
+                            throw new FormatException("-dlalldays must be at least 1.");
+                        }
+                        Configuration.DownloadAllDays = Math.Min(downloadAllDays, 180);
+                        break;
+                    case "-list":
+                        Configuration.ListBots = true;
+                        break;
+                    case "-forceupdate":
+                        Configuration.ForceUpdateSnapshot = true;
+                        break;
+                    case "-validateimage":
+                        Configuration.ValidateImage = true;
+                        break;
+                    case "-dlall":
+                        Configuration.DownloadAllHistoricalSnapshots = true;
+                        break;
+                    default:
+                        throw new FormatException($"Unrecognized argument '{args[argIndex]}'.");
                 }
             }
 
-            if (args.Contains("-username"))
+            if (string.IsNullOrEmpty(Configuration.OutputPath))
             {
-                Configuration.Username = args[args.IndexOf("-username") + 1];
-            }
-
-            if (args.Contains("-password"))
-            {
-                Configuration.Password = args[args.IndexOf("-password") + 1];
-            }
-
-            if (args.Contains("-list"))
-            {
-                Configuration.ListBots = true;
-            }
-
-            if (args.Contains("-forceupdate"))
-            {
-                Configuration.ForceUpdateSnapshot = true;
-            }
-
-            if (args.Contains("-deviceid"))
-            {
-                if (int.TryParse(args[args.IndexOf("-deviceid") + 1], out int deviceId))
-                {
-                    Configuration.DeviceId = deviceId;
-                }
-            }
-
-            if (args.Contains("-maxretries"))
-            {
-                if (short.TryParse(args[args.IndexOf("-maxretries") + 1], out short maxretries))
-                {
-                    Configuration.MaximumRetries = maxretries;
-                }
-            }
-
-            if (args.Contains("-validateimage"))
-            {
-                Configuration.ValidateImage = true;
-            }
-
-            if (args.Contains("-dlall"))
-            {
-                Configuration.DownloadAllHistoricalSnapshots = true;
-            }
-
-            if (args.Contains("-dlalldays"))
-            {
-                if (int.TryParse(args[args.IndexOf("-dlalldays") + 1], out int downloadAllDays) && downloadAllDays > 0)
-                {
-                    Configuration.DownloadAllDays = Math.Min(downloadAllDays, 180);
-                }
+                Configuration.OutputPath = Environment.CurrentDirectory;
             }
         }
 
-        private static async Task DownloadAllHistoricalRecordings(Session session)
+        private static string ConsumeOptionValue(IList<string> args, ref int index, string option)
+        {
+            if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[index + 1]))
+            {
+                throw new FormatException($"{option} requires a value.");
+            }
+
+            return args[++index];
+        }
+
+        private static bool IsRetryableSnapshotError(Exception exception)
+        {
+            if (exception is DeviceUnknownException || exception is ThrottledException || exception is TimeoutException || exception is HttpRequestException)
+            {
+                return true;
+            }
+
+            if (exception is WebException webException && webException.Status == WebExceptionStatus.Timeout)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static async Task DownloadAllHistoricalRecordings(Session session, CancellationToken cancellationToken)
         {
             var outputPath = Path.Combine(Configuration.OutputPath, $"{Configuration.DeviceId} - historical recordings");
             Directory.CreateDirectory(outputPath);
@@ -399,11 +462,11 @@ namespace KoenZomers.Ring.SnapshotDownload
             {
                 var dayStart = day;
                 var dayEnd = day == now.Date ? now : day.AddDays(1).AddMilliseconds(-1);
-                totalDownloaded += await DownloadVideoHistoryForDay(session, outputPath, manifest, dayStart, dayEnd);
+                totalDownloaded += await DownloadVideoHistoryForDay(session, outputPath, manifest, dayStart, dayEnd, cancellationToken);
             }
 
             var manifestPath = Path.Combine(outputPath, "manifest.json");
-            await File.WriteAllTextAsync(manifestPath, System.Text.Json.JsonSerializer.Serialize(manifest, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            await File.WriteAllTextAsync(manifestPath, System.Text.Json.JsonSerializer.Serialize(manifest, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
             Console.WriteLine();
             Console.WriteLine($"Downloaded {totalDownloaded} historical recording clip(s).");
@@ -411,13 +474,13 @@ namespace KoenZomers.Ring.SnapshotDownload
             Console.WriteLine($"Manifest saved to {manifestPath}");
         }
 
-        private static async Task<int> DownloadVideoHistoryForDay(Session session, string outputPath, List<object> manifest, DateTime dayStart, DateTime dayEnd)
+        private static async Task<int> DownloadVideoHistoryForDay(Session session, string outputPath, List<object> manifest, DateTime dayStart, DateTime dayEnd, CancellationToken cancellationToken)
         {
             Console.Write($"Querying video history {dayStart:yyyy-MM-dd}... ");
             VideoSearchResponse response;
             try
             {
-                response = await session.SearchVideoHistory(Configuration.DeviceId.Value, dayStart, dayEnd);
+                response = await session.SearchVideoHistory(Configuration.DeviceId.Value, dayStart, dayEnd, cancellationToken);
             }
             catch (Exception e)
             {
@@ -444,9 +507,7 @@ namespace KoenZomers.Ring.SnapshotDownload
                 Console.Write($"    Downloading {fileName}... ");
                 try
                 {
-                    using var stream = await session.GetDoorbotHistoryRecording(historicalEvent.DingId);
-                    using var file = File.Create(filePath);
-                    await stream.CopyToAsync(file);
+                    await session.GetDoorbotHistoryRecording(historicalEvent.DingId, filePath, cancellationToken);
                     downloaded++;
                     manifest.Add(new
                     {
@@ -477,6 +538,29 @@ namespace KoenZomers.Ring.SnapshotDownload
             }
 
             return value;
+        }
+
+        private static void TryDeletePartialFile(string downloadFullPath)
+        {
+            try
+            {
+                if (File.Exists(downloadFullPath))
+                {
+                    File.Delete(downloadFullPath);
+                }
+            }
+            catch
+            {
+                // best-effort cleanup
+            }
+        }
+
+        private static TimeSpan GetSnapshotRetryDelay(int attempt)
+        {
+            var baseDelaySeconds = Math.Min(10.0, Math.Pow(2.0, Math.Max(0, attempt - 1)));
+            var jitter = RetryJitter.NextDouble() * 0.35;
+            var delayedSeconds = baseDelaySeconds * (1 + jitter);
+            return TimeSpan.FromSeconds(delayedSeconds);
         }
 
         /// <summary>
