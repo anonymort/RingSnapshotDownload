@@ -2,6 +2,8 @@
 
 A small command-line tool that downloads the latest snapshot image from a Ring camera or doorbell.
 
+This is an Anonymort-maintained fork of [KoenZomers/RingSnapshotDownload](https://github.com/KoenZomers/RingSnapshotDownload). It keeps the original project's snapshot-download goal, updates it for current Ring behavior, and adds a guided local workflow for historical recordings, frame extraction, and timelapse creation.
+
 Think of it like this:
 
 1. You sign in to Ring once.
